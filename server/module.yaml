@@ -2,14 +2,29 @@ product: jvm/app
 
 dependencies:
   - //core
+  - $libs.kotlinx.datetime
+  - $libs.kotlinx.serialization.json
+  - $libs.kotlinx.coroutines.core
+  - $libs.firebase.admin
   - $ktor.server.core
   - $ktor.server.netty
+  - $ktor.server.sse
+  - $ktor.server.cors
+  - $ktor.server.contentNegotiation
+  - $ktor.serialization.kotlinx.json
+  - $ktor.server.auth
+  - $ktor.server.auth.jwt
+  - $ktor.server.statusPages
   - $libs.logback.classic
 
 settings:
   ktor: enabled
+  kotlin:
+    serialization: json
   jvm:
     mainClass: co.ke.xently.expense.tracker.server.ApplicationKt
 
 test-dependencies:
   - $ktor.server.testHost
+  - $libs.kotlinx.serialization.json
+  - $libs.kotlinx.datetime

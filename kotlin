@@ -57,7 +57,6 @@ check_sha() {
   return 1
 }
 
-
 download_and_extract() {
   moniker="$1"
   file_url="$2"
@@ -69,7 +68,7 @@ download_and_extract() {
 
   if [ -e "$extract_dir/.flag" ] && [ "$(cat "$extract_dir/.flag")" = "${file_sha}" ]; then
     # Everything is up-to-date in $extract_dir, do nothing
-    return 0;
+    return 0
   fi
 
   mkdir -p "$cache_dir"
@@ -96,7 +95,6 @@ download_and_extract() {
     fi
   done
 
-
   # An extraction left half-done must never keep the .flag file, which marks $extract_dir as complete: subsequent runs
   # would skip the extraction and use the broken directory.
   cleanup_incomplete_provisioning() {
@@ -115,12 +113,12 @@ download_and_extract() {
   if [ -e "$extract_dir/.flag" ] && [ "$(cat "$extract_dir/.flag")" = "${file_sha}" ]; then
     # Everything is up-to-date in $extract_dir, just release the lock
     unlock_and_cleanup
-    return 0;
+    return 0
   fi
 
   if [ "$show_banner_on_cache_miss" = "true" ] && [ -z "${KOTLIN_CLI_NO_WELCOME_BANNER:-}" ]; then
-      echo
-      cat <<EOF
+    echo
+    cat <<EOF
 Welcome to
 
 @@@        @@@@                               @@@    @@@
@@ -135,10 +133,10 @@ Welcome to
 @@@      %@@@=   %@@@@*,*@@@@%      @@@@###   @@@    @@@    @@@        @@@
 @@@        @@@@    "@@@@@@@"         %@@@@@   @@@    @@@    @@@        @@@
 EOF
-      echo
-      echo "This is the first run of the Kotlin CLI v$kotlin_cli_version, so we need to download the Kotlin Toolchain."
-      echo "Please give us a few seconds, subsequent runs will be faster."
-      echo
+    echo
+    echo "This is the first run of the Kotlin CLI v$kotlin_cli_version, so we need to download the Kotlin Toolchain."
+    echo "Please give us a few seconds, subsequent runs will be faster."
+    echo
   fi
 
   echo "Downloading $moniker..."
@@ -161,18 +159,20 @@ EOF
   mkdir -p "$extract_dir"
 
   case "$file_url" in
-    *".zip")
-      if command -v unzip >/dev/null 2>&1; then
-        unzip -q "$temp_file" -d "$extract_dir"
-      else
-        die "ERROR: Please install 'unzip', which is required to extract $moniker"
-      fi ;;
-    *)
-      if command -v tar >/dev/null 2>&1; then
-        tar -x -f "$temp_file" -C "$extract_dir"
-      else
-        die "ERROR: Please install 'tar', which is required to extract $moniker"
-      fi ;;
+  *".zip")
+    if command -v unzip >/dev/null 2>&1; then
+      unzip -q "$temp_file" -d "$extract_dir"
+    else
+      die "ERROR: Please install 'unzip', which is required to extract $moniker"
+    fi
+    ;;
+  *)
+    if command -v tar >/dev/null 2>&1; then
+      tar -x -f "$temp_file" -C "$extract_dir"
+    else
+      die "ERROR: Please install 'tar', which is required to extract $moniker"
+    fi
+    ;;
   esac
 
   rm -f "$temp_file"
@@ -185,7 +185,6 @@ EOF
   echo "Download complete."
   echo
 }
-
 
 # ********** Project-local version detection **********
 
@@ -227,12 +226,12 @@ find_project_context() {
 parse_project_context() {
   # Parse kotlin_cli_version and kotlin_cli_sha256 from "$wrapper_script" without executing it.
   parsed_kotlin_cli_version=$(
-    sed -n 's/^kotlin_cli_version=\([A-Za-z0-9._+-]\{1,\}\)[[:space:]]*$/\1/p' "$wrapper_script" \
-      | head -n 1
+    sed -n 's/^kotlin_cli_version=\([A-Za-z0-9._+-]\{1,\}\)[[:space:]]*$/\1/p' "$wrapper_script" |
+      head -n 1
   )
   parsed_kotlin_cli_sha256=$(
-    sed -n 's/^kotlin_cli_sha256=\([0-9a-fA-F]\{64\}\)[[:space:]]*$/\1/p' "$wrapper_script" \
-      | head -n 1
+    sed -n 's/^kotlin_cli_sha256=\([0-9a-fA-F]\{64\}\)[[:space:]]*$/\1/p' "$wrapper_script" |
+      head -n 1
   )
 
   if [ -z "$parsed_kotlin_cli_version" ]; then
@@ -258,22 +257,22 @@ fi
 
 kernelName=$(uname -s)
 case "$kernelName" in
-  Darwin* )
-    default_kotlin_cli_cache_dir="$HOME/Library/Caches/JetBrains/Kotlin/cli"
-    ;;
-  Linux* )
-    default_kotlin_cli_cache_dir="$HOME/.cache/JetBrains/Kotlin/cli"
-    ;;
-  CYGWIN* | MSYS* | MINGW* )
-    if command -v cygpath >/dev/null 2>&1; then
-      default_kotlin_cli_cache_dir=$(cygpath -u "$LOCALAPPDATA\JetBrains\Kotlin\cli")
-    else
-      die "The 'cypath' command is not available, but the Kotlin CLI needs it. Use kotlin.bat instead, or try a Cygwin or MSYS environment."
-    fi
-    ;;
-  *)
-    die "Unsupported platform $kernelName"
-    ;;
+Darwin*)
+  default_kotlin_cli_cache_dir="$HOME/Library/Caches/JetBrains/Kotlin/cli"
+  ;;
+Linux*)
+  default_kotlin_cli_cache_dir="$HOME/.cache/JetBrains/Kotlin/cli"
+  ;;
+CYGWIN* | MSYS* | MINGW*)
+  if command -v cygpath >/dev/null 2>&1; then
+    default_kotlin_cli_cache_dir=$(cygpath -u "$LOCALAPPDATA\JetBrains\Kotlin\cli")
+  else
+    die "The 'cypath' command is not available, but the Kotlin CLI needs it. Use kotlin.bat instead, or try a Cygwin or MSYS environment."
+  fi
+  ;;
+*)
+  die "Unsupported platform $kernelName"
+  ;;
 esac
 
 kotlin_cli_cache_dir="${KOTLIN_CLI_BOOTSTRAP_CACHE_DIR:-$default_kotlin_cli_cache_dir}"
@@ -289,4 +288,4 @@ download_and_extract "Kotlin Toolchain distribution v$kotlin_cli_version" "$kotl
 launcher_script="$kotlin_cli_target_dir/bin/launcher.sh"
 
 KOTLIN_CLI_WRAPPER_PATH="$(realpath "$0")" \
-exec /bin/sh "$launcher_script" "$@"
+  exec /bin/sh "$launcher_script" "$@"
