@@ -1,0 +1,13 @@
+product: android/app
+
+dependencies:
+  - //app/shared
+  - $libs.androidx.activity.compose
+  - $compose.preview
+  - $compose.uiTooling
+
+settings:
+  compose: enabled
+  android:
+    namespace: co.ke.xently.expense.tracker
+    applicationId: co.ke.xently.expense.tracker
