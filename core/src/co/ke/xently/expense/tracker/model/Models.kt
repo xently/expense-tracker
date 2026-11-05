@@ -4,6 +4,85 @@ import kotlinx.datetime.LocalDate
 import kotlinx.serialization.Serializable
 
 @Serializable
+data class ProjectUser(
+    val id: String,
+    val username: String,
+    val displayName: String,
+    val email: String
+)
+
+@Serializable
+data class Project(
+    val id: String,
+    val name: String,
+    val description: String,
+    val ownerUserId: String,
+    val createdAtEpochMs: Long
+)
+
+@Serializable
+enum class ProjectMemberRole {
+    OWNER,
+    PARTNER
+}
+
+@Serializable
+data class ProjectMembership(
+    val projectId: String,
+    val userId: String,
+    val role: ProjectMemberRole,
+    val joinedAtEpochMs: Long
+)
+
+@Serializable
+enum class ProjectInvitationStatus {
+    PENDING,
+    ACCEPTED,
+    DECLINED
+}
+
+@Serializable
+data class ProjectInvitation(
+    val id: String,
+    val projectId: String,
+    val projectName: String,
+    val inviterUserId: String,
+    val inviterUsername: String,
+    val inviteeUserId: String,
+    val inviteeUsername: String,
+    val status: ProjectInvitationStatus,
+    val createdAtEpochMs: Long
+)
+
+@Serializable
+data class MyProjectsResponse(
+    val projects: List<Project>,
+    val defaultProjectId: String?
+)
+
+@Serializable
+data class RegistrationRequest(
+    val username: String,
+    val displayName: String
+)
+
+@Serializable
+data class CreateProjectRequest(
+    val name: String,
+    val description: String = ""
+)
+
+@Serializable
+data class InviteProjectPartnerRequest(
+    val username: String
+)
+
+@Serializable
+data class RespondToInvitationRequest(
+    val accept: Boolean
+)
+
+@Serializable
 enum class PartnerId(val displayName: String, val email: String) {
     HARRISON("Harrison", "harrison@farm.co.ke"),
     HERMAN("Herman", "herman@farm.co.ke"),

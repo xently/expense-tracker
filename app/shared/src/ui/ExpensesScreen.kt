@@ -1,447 +1,323 @@
 package co.ke.xently.expense.tracker.ui
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.intl.Locale
+import androidx.compose.ui.text.toUpperCase
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.tooling.preview.PreviewDynamicColors
+import androidx.compose.ui.tooling.preview.PreviewLightDark
+import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import co.ke.xently.expense.tracker.calculator.ExpenseCalculator
+import co.ke.xently.expense.tracker.categoryLabel
 import co.ke.xently.expense.tracker.model.Expense
 import co.ke.xently.expense.tracker.model.ExpenseCategory
-import co.ke.xently.expense.tracker.model.PartnerId
-import co.ke.xently.expense.tracker.viewmodel.ExpenseTrackerUiState
-import kotlinx.datetime.LocalDate
+import co.ke.xently.expense.tracker.resources.Res
+import co.ke.xently.expense.tracker.resources.cancel
+import co.ke.xently.expense.tracker.resources.currency_amount
+import co.ke.xently.expense.tracker.resources.delete
+import co.ke.xently.expense.tracker.resources.dialog_text_delete_expense
+import co.ke.xently.expense.tracker.resources.dialog_title_delete_expense
+import co.ke.xently.expense.tracker.resources.due_date
+import co.ke.xently.expense.tracker.resources.expense_filter_all_count
+import co.ke.xently.expense.tracker.resources.expense_filter_category_count
+import co.ke.xently.expense.tracker.resources.expense_paid_by_date
+import co.ke.xently.expense.tracker.resources.log_expense
+import co.ke.xently.expense.tracker.resources.no_expenses
+import co.ke.xently.expense.tracker.resources.no_matching_expenses
+import co.ke.xently.expense.tracker.resources.partner_no_longer_listed
+import co.ke.xently.expense.tracker.resources.split_details
+import co.ke.xently.expense.tracker.resources.split_details_unavailable
+import co.ke.xently.expense.tracker.theme.ExpenseTrackerTheme
+import co.ke.xently.expense.tracker.theme.Icons
+import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceEvent
+import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceState
+import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun ExpensesScreen(
-    state: ExpenseTrackerUiState,
-    onCategoryFilterSelect: (ExpenseCategory?) -> Unit,
-    onAddExpenseClick: () -> Unit,
-    onDismissAddExpenseDialog: () -> Unit,
-    onSaveExpense: (title: String, category: ExpenseCategory, amount: Double, date: LocalDate, partnerId: String, notes: String) -> Unit,
-    onDeleteExpense: (String) -> Unit,
-    modifier: Modifier = Modifier
+internal fun ExpensesScreen(
+    state: ProjectWorkspaceState,
+    onEvent: (ProjectWorkspaceEvent) -> Unit
 ) {
-    Box(modifier = modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
+    var selectedCategory by remember(state.selectedProjectId) {
+        mutableStateOf<ExpenseCategory?>(
+            null
+        )
+    }
+    val visibleExpenses = filterExpensesByCategory(state.expenses, selectedCategory)
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            Modifier
                 .fillMaxSize()
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Category Filter Chips
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = state.selectedCategoryFilter == null,
-                    onClick = { onCategoryFilterSelect(null) },
-                    label = { Text("All (${state.expenses.size})") }
-                )
-                ExpenseCategory.entries.forEach { cat ->
-                    val count = state.expenses.count { it.category == cat }
+            item {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     FilterChip(
-                        selected = state.selectedCategoryFilter == cat,
-                        onClick = { onCategoryFilterSelect(if (state.selectedCategoryFilter == cat) null else cat) },
-                        label = { Text("${cat.displayName} ($count)") }
+                        selected = selectedCategory == null,
+                        onClick = { selectedCategory = null },
+                        label = {
+                            Text(
+                                stringResource(
+                                    Res.string.expense_filter_all_count,
+                                    state.expenses.size
+                                )
+                            )
+                        }
                     )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Expenses List
-            val list = state.filteredExpenses
-            if (list.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "No expenses logged in this category.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    contentPadding = PaddingValues(bottom = 80.dp)
-                ) {
-                    items(list, key = { it.id }) { expense ->
-                        ExpenseItemCard(
-                            expense = expense,
-                            onDelete = { onDeleteExpense(expense.id) }
+                    ExpenseCategory.entries.forEach { category ->
+                        FilterChip(
+                            selected = selectedCategory == category,
+                            onClick = { selectedCategory = category },
+                            label = {
+                                Text(
+                                    stringResource(
+                                        Res.string.expense_filter_category_count,
+                                        categoryLabel(category),
+                                        state.expenses.count { it.category == category }
+                                    )
+                                )
+                            }
                         )
                     }
                 }
             }
+            if (visibleExpenses.isEmpty()) {
+                item {
+                    Text(
+                        stringResource(
+                            if (state.expenses.isEmpty()) Res.string.no_expenses
+                            else Res.string.no_matching_expenses
+                        )
+                    )
+                }
+            }
+            items(visibleExpenses, key = { it.id }) { expense ->
+                ExpenseDetailCard(expense, state, onEvent)
+            }
         }
-
-        // Floating Action Button
         FloatingActionButton(
-            onClick = onAddExpenseClick,
+            onClick = { onEvent(ProjectWorkspaceEvent.OpenExpenseForm) },
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(24.dp),
-            containerColor = MaterialTheme.colorScheme.primary
+                .padding(20.dp)
         ) {
             Text(
-                text = "+ Log Expense",
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-        }
-
-        // Add Expense Dialog
-        if (state.showAddExpenseDialog) {
-            AddExpenseDialog(
-                onDismiss = onDismissAddExpenseDialog,
-                onSave = onSaveExpense
+                stringResource(Res.string.log_expense),
+                modifier = Modifier.padding(horizontal = 16.dp),
+                fontWeight = FontWeight.Bold
             )
         }
     }
 }
 
 @Composable
-fun ExpenseItemCard(
+private fun ExpenseDetailCard(
     expense: Expense,
-    onDelete: () -> Unit
+    state: ProjectWorkspaceState,
+    onEvent: (ProjectWorkspaceEvent) -> Unit
 ) {
+    val expensePaymentDescription = stringResource(
+        Res.string.expense_paid_by_date,
+        partnerName(state, expense.payingPartnerId),
+        expense.transactionDate.toString()
+    )
+    var showDeletionConfirmationDialog by rememberSaveable {
+        mutableStateOf(false)
+    }
+    if (showDeletionConfirmationDialog) {
+        DeleteExpenseConfirmationDialog(
+            expensePaymentDescription = "${expense.title} - $expensePaymentDescription",
+            onDismissRequest = { showDeletionConfirmationDialog = false },
+            onConfirmation = { onEvent(ProjectWorkspaceEvent.DeleteExpense(expenseId = expense.id)) },
+        )
+    }
     Card(
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
-                alpha = 0.6f
-            )
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
         ),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Surface(
                         shape = RoundedCornerShape(6.dp),
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Text(
-                            text = expense.category.displayName,
+                            categoryLabel(expense.category),
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = expense.title,
+                        expense.title,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
+                }
+                Text(
+                    stringResource(
+                        Res.string.currency_amount,
+                        expense.totalAmount.toLong().toString()
+                    ),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Text(
+                text = expensePaymentDescription,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            AnimatedVisibility(expense.notes.isNotBlank()) {
+                Text(expense.notes)
+            }
+            HorizontalDivider()
+            Text(
+                stringResource(Res.string.split_details),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            if (expense.splits.isEmpty()) {
+                Text(
+                    stringResource(Res.string.split_details_unavailable),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            } else {
+                expense.splits.forEach { split ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(text = partnerName(state, split.partnerId))
+                        Text(
+                            stringResource(
+                                Res.string.currency_amount,
+                                split.shareAmount.toLong().toString()
+                            )
+                        )
+                    }
                     Text(
-                        text = "Paid out-of-pocket by ${expense.payingPartnerId} on ${expense.transactionDate}",
+                        stringResource(Res.string.due_date, split.dueDate.toString()),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "KES ${expense.totalAmount.toLong()}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    TextButton(onClick = onDelete, contentPadding = PaddingValues(0.dp)) {
-                        Text(
-                            text = "Delete",
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
             }
-
-            if (expense.notes.isNotBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Note: ${expense.notes}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Equal 1/3 Split breakdown preview
-            Text(
-                text = "Equal Split (1/3 each) • Due Date: ${
-                    expense.splits.firstOrNull()?.dueDate ?: ExpenseCalculator.calculateDueDate(
-                        expense.transactionDate
-                    )
-                }",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Row(
+            OutlinedButton(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                shape = MaterialTheme.shapes.small.copy(CornerSize(25.dp)),
+                contentPadding = PaddingValues(0.dp),
+                onClick = { showDeletionConfirmationDialog = true },
             ) {
-                val splits = expense.splits.ifEmpty {
-                    ExpenseCalculator.calculateSplits(
-                        expense.totalAmount,
-                        expense.transactionDate
-                    )
-                }
-                splits.forEach { split ->
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surface
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(6.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = split.partnerId,
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "KES ${split.shareAmount.toLong()}",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontSize = 11.sp
-                            )
-                        }
-                    }
-                }
+                Text(
+                    text = stringResource(Res.string.delete).toUpperCase(Locale.current),
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddExpenseDialog(
-    onDismiss: () -> Unit,
-    onSave: (title: String, category: ExpenseCategory, amount: Double, date: LocalDate, partnerId: String, notes: String) -> Unit
+private fun partnerName(
+    state: ProjectWorkspaceState,
+    payingPartnerId: String
+): String = remember(state.partners) {
+    state.partners.firstOrNull { it.id == payingPartnerId }?.name
+} ?: stringResource(Res.string.partner_no_longer_listed)
+
+@Composable
+private fun DeleteExpenseConfirmationDialog(
+    expensePaymentDescription: String,
+    onDismissRequest: () -> Unit,
+    onConfirmation: () -> Unit,
 ) {
-    var title by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf(ExpenseCategory.LAND_PREP) }
-    var amountText by remember { mutableStateOf("") }
-    var dateText by remember { mutableStateOf("2026-08-15") }
-    var selectedPartner by remember { mutableStateOf(PartnerId.HARRISON.name) }
-    var notes by remember { mutableStateOf("") }
-
-    val amountVal = amountText.toDoubleOrNull() ?: 0.0
-    val parsedDate = runCatching { LocalDate.parse(dateText) }.getOrDefault(LocalDate(2026, 8, 15))
-    val dueDate = ExpenseCalculator.calculateDueDate(parsedDate)
-    val sharePerPartner = amountVal / 3.0
-
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(
-                    text = "Log Farm Expense",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+    AlertDialog(
+        icon = {
+            Icon(imageVector = Icons.delete, contentDescription = null)
+        },
+        title = {
+            Text(text = stringResource(Res.string.dialog_title_delete_expense))
+        },
+        text = {
+            Text(
+                text = stringResource(
+                    Res.string.dialog_text_delete_expense,
+                    expensePaymentDescription
                 )
-
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    label = { Text("Expense Title / Description") },
-                    placeholder = { Text("e.g. 2nd Weeding labor") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
-                )
-
-                // Category Selection
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    var categoryExpanded by remember { mutableStateOf(false) }
-                    ExposedDropdownMenuBox(
-                        expanded = categoryExpanded,
-                        onExpandedChange = { categoryExpanded = it },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedCategory.displayName,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Category") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryExpanded) },
-                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = categoryExpanded,
-                            onDismissRequest = { categoryExpanded = false }
-                        ) {
-                            ExpenseCategory.entries.forEach { cat ->
-                                DropdownMenuItem(
-                                    text = { Text(cat.displayName) },
-                                    onClick = {
-                                        selectedCategory = cat
-                                        categoryExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-
-                    // Paying Partner Selection
-                    var partnerExpanded by remember { mutableStateOf(false) }
-                    ExposedDropdownMenuBox(
-                        expanded = partnerExpanded,
-                        onExpandedChange = { partnerExpanded = it },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        OutlinedTextField(
-                            value = selectedPartner,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Paid By") },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = partnerExpanded) },
-                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
-                        )
-                        ExposedDropdownMenu(
-                            expanded = partnerExpanded,
-                            onDismissRequest = { partnerExpanded = false }
-                        ) {
-                            PartnerId.entries.forEach { p ->
-                                DropdownMenuItem(
-                                    text = { Text(p.displayName) },
-                                    onClick = {
-                                        selectedPartner = p.name
-                                        partnerExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = amountText,
-                        onValueChange = { amountText = it },
-                        label = { Text("Total Amount (KES)") },
-                        placeholder = { Text("30000") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-
-                    OutlinedTextField(
-                        value = dateText,
-                        onValueChange = { dateText = it },
-                        label = { Text("Date (YYYY-MM-DD)") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true
-                    )
-                }
-
-                OutlinedTextField(
-                    value = notes,
-                    onValueChange = { notes = it },
-                    label = { Text("Notes (optional)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 2
-                )
-
-                // Live Equal Split Preview
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(
-                            alpha = 0.5f
-                        )
-                    ),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Text(
-                            text = "Auto Equal Split (1/3 each): KES ${sharePerPartner.toLong()} per partner",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = "Calculated Due Date (EOMONTH + 10 days): $dueDate",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                        )
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel")
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            if (title.isNotBlank() && amountVal > 0) {
-                                onSave(
-                                    title,
-                                    selectedCategory,
-                                    amountVal,
-                                    parsedDate,
-                                    selectedPartner,
-                                    notes
-                                )
-                            }
-                        },
-                        enabled = title.isNotBlank() && amountVal > 0
-                    ) {
-                        Text("Save Expense")
-                    }
-                }
+            )
+        },
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            TextButton(onClick = onConfirmation) {
+                Text(stringResource(Res.string.delete))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(stringResource(Res.string.cancel))
             }
         }
-    }
+    )
+}
+
+@PreviewLightDark
+@PreviewFontScale
+@PreviewDynamicColors
+@PreviewScreenSizes
+@Composable
+private fun ExpensesScreenPreview() {
+    ExpenseTrackerTheme { ExpensesScreen(previewWorkspaceState) {} }
+}
+
+@Preview(name = "No expenses")
+@PreviewLightDark
+@Composable
+private fun EmptyExpensesScreenPreview() {
+    ExpenseTrackerTheme { ExpensesScreen(previewEmptyWorkspaceState) {} }
 }

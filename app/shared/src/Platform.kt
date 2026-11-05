@@ -1,7 +1,5 @@
 package co.ke.xently.expense.tracker
 
-interface Platform {
-    val name: String
-}
+data class Platform(val name: String)
 
 expect fun getPlatform(): Platform

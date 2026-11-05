@@ -1,10 +1,3 @@
 package co.ke.xently.expense.tracker
 
-import platform.UIKit.UIDevice
-
-class IOSPlatform : Platform {
-    override val name: String =
-        UIDevice.currentDevice.systemName() + " " + UIDevice.currentDevice.systemVersion
-}
-
-actual fun getPlatform(): Platform = IOSPlatform()
+actual fun getPlatform(): Platform = Platform("iOS")

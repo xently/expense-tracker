@@ -16,18 +16,47 @@ dependencies:
   - $compose.hotReload.runtimeApi
   - $libs.androidx.lifecycle.viewmodel.compose
   - $libs.androidx.lifecycle.runtime.compose
+  - $libs.jetbrains.navigation3.ui
+  - $libs.koin.core
+  - $libs.androidx.room3.runtime
+  - $libs.androidx.datastore.core
+  - $libs.androidx.datastore.core.okio
+  - $libs.androidx.datastore.preferences.core
+  - $ktor.client.core
+  - $ktor.client.logging
+  - $ktor.client.contentNegotiation
+  - $ktor.serialization.kotlinx.json
+
+test-dependencies:
+  - $libs.kotlinx.coroutines.test
 
 dependencies@android:
   - $compose.uiTooling
+  - $libs.androidx.sqlite.bundled
+  - $ktor.client.cio
+
+dependencies@ios:
+  - $libs.androidx.sqlite.bundled
+  - $ktor.client.cio
+
+dependencies@wasmJs:
+  - io.ktor:ktor-client-js
 
 settings:
+  ktor: enabled
   kotlin:
     serialization:
       format: json
       version: 1.12.0
+    ksp:
+      processors:
+        - androidx.room3:room3-compiler:3.1.0-alpha01
+    compilerPlugins:
+      - id: io.insert-koin.compiler.plugin
+        dependency: io.insert-koin:koin-compiler-plugin:1.2.1
   compose:
     enabled: true
     resources:
       packageName: co.ke.xently.expense.tracker.resources
-      # Generate public accessors so other modules (and previews) can use Res.*
       exposedAccessors: true
+      # These generated string resources are shared by all client targets.

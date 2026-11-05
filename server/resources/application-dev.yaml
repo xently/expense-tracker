@@ -1,0 +1,15 @@
+ktor:
+  development: true
+  deployment:
+    host: 0.0.0.0
+    port: 8081
+    watch:
+      - classes
+  application:
+    modules:
+      - co.ke.xently.expense.tracker.server.ApplicationKt.mainModule
+app:
+  demoMode: true
+  projectRepository: inmemory
+  enableLegacyFinanceRoutes: false
+  firebaseProjectId: ""

@@ -1,6 +1,17 @@
 package co.ke.xently.expense.tracker.calculator
 
-import co.ke.xently.expense.tracker.model.*
+import co.ke.xently.expense.tracker.model.AppNotification
+import co.ke.xently.expense.tracker.model.ComplianceStatus
+import co.ke.xently.expense.tracker.model.DashboardSummary
+import co.ke.xently.expense.tracker.model.Expense
+import co.ke.xently.expense.tracker.model.ExpenseCategory
+import co.ke.xently.expense.tracker.model.ExpenseSplit
+import co.ke.xently.expense.tracker.model.Partner
+import co.ke.xently.expense.tracker.model.PartnerId
+import co.ke.xently.expense.tracker.model.PartnerLedgerSummary
+import co.ke.xently.expense.tracker.model.PartnerSettlement
+import co.ke.xently.expense.tracker.model.SeasonRevenueCalculation
+import co.ke.xently.expense.tracker.model.TranchePayment
 import kotlinx.datetime.LocalDate
 import kotlin.math.round
 
@@ -221,8 +232,7 @@ object RevenueSplitCalculator {
             val fraction = sharePct / 100.0
             val grossPayoutShare = ExpenseCalculator.roundDouble(grossFactoryPayout * fraction)
             val netPayoutShare = ExpenseCalculator.roundDouble(netFactoryPayout * fraction)
-            val finalTotalPayout = netPayoutShare
-            val netProfit = ExpenseCalculator.roundDouble(finalTotalPayout - actualInvestment)
+            val netProfit = ExpenseCalculator.roundDouble(netPayoutShare - actualInvestment)
             val roi = if (actualInvestment > 0.0) {
                 ExpenseCalculator.roundDouble((netProfit / actualInvestment) * 100.0)
             } else {
@@ -237,7 +247,7 @@ object RevenueSplitCalculator {
                 grossPayoutShare = grossPayoutShare,
                 netPayoutShare = netPayoutShare,
                 directOutOfPocketRecovery = summary.directOutOfPocket,
-                finalTotalPayout = finalTotalPayout,
+                finalTotalPayout = netPayoutShare,
                 netProfit = netProfit,
                 returnOnInvestmentPercentage = roi
             )

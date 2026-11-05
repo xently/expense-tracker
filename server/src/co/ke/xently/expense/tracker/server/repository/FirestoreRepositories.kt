@@ -1,6 +1,10 @@
 package co.ke.xently.expense.tracker.server.repository
 
-import co.ke.xently.expense.tracker.model.*
+import co.ke.xently.expense.tracker.model.AppNotification
+import co.ke.xently.expense.tracker.model.Expense
+import co.ke.xently.expense.tracker.model.ExpenseCategory
+import co.ke.xently.expense.tracker.model.Partner
+import co.ke.xently.expense.tracker.model.TranchePayment
 import com.google.cloud.firestore.Firestore
 import com.google.firebase.cloud.FirestoreClient
 import kotlinx.coroutines.Dispatchers

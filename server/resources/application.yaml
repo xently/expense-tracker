@@ -1,0 +1,12 @@
+ktor:
+  deployment:
+    host: 0.0.0.0
+    port: 8081
+  application:
+    modules:
+      - co.ke.xently.expense.tracker.server.ApplicationKt.mainModule
+app:
+  demoMode: false
+  projectRepository: inmemory
+  enableLegacyFinanceRoutes: false
+  firebaseProjectId: ""

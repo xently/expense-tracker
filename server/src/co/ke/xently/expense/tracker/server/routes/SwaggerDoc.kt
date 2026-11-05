@@ -5,8 +5,8 @@ val OPENAPI_SPEC_JSON: String = $$"""
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Sugarcane Season Expense Tracker API",
-    "description": "Comprehensive REST and SSE API for tracking sugarcane farming and planting season expenses, managing partner tranche contributions (Harrison, Herman, Vin), calculating pro-rata revenue splits, and automating overdue notifications.",
+    "title": "Project Expense Tracker API",
+    "description": "Authenticated, project-scoped API for arbitrary partner projects, invitations, expenses, tranches, dashboards, and revenue splits. Legacy global finance endpoints in this specification are registered only when ENABLE_LEGACY_FINANCE_ROUTES=true.",
     "version": "1.0.0",
     "contact": {
       "name": "Sugarcane Farming Partnership",
@@ -15,7 +15,7 @@ val OPENAPI_SPEC_JSON: String = $$"""
   },
   "servers": [
     {
-      "url": "http://localhost:8080",
+      "url": "http://localhost:8081",
       "description": "Local Development Server"
     }
   ],
@@ -27,9 +27,164 @@ val OPENAPI_SPEC_JSON: String = $$"""
     { "name": "Partners", "description": "Partner ledger summaries and compliance status" },
     { "name": "Revenue Split", "description": "End-of-season factory payout settlement calculator" },
     { "name": "Notifications", "description": "Overdue reminders and FCM push alerts" },
-    { "name": "Events", "description": "Server-Sent Events (SSE) real-time stream" }
+    { "name": "Events", "description": "Legacy Server-Sent Events stream; compatibility mode only" },
+    { "name": "Projects", "description": "Authenticated project creation, membership, invitations, and scoped finance" },
+    { "name": "Account", "description": "Authenticated user profile, project list, and invitation inbox" }
   ],
   "paths": {
+    "/api/v1/me/profile": {
+      "get": {
+        "tags": ["Account"],
+        "summary": "Get the authenticated user's profile",
+        "security": [{ "BearerAuth": [] }],
+        "responses": {
+          "200": { "description": "User profile", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectUser" } } } },
+          "401": { "description": "Missing or invalid bearer token" },
+          "404": { "description": "Profile is not registered" }
+        }
+      },
+      "post": {
+        "tags": ["Account"],
+        "summary": "Register a unique username for the authenticated user",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegistrationRequest" } } } },
+        "responses": {
+          "201": { "description": "Profile created" },
+          "200": { "description": "Existing profile returned" },
+          "409": { "description": "Username is already registered" }
+        }
+      }
+    },
+    "/api/v1/me/projects": {
+      "get": {
+        "tags": ["Account"],
+        "summary": "List projects the authenticated user belongs to",
+        "description": "defaultProjectId is set only when exactly one project is available.",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "Caller projects", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MyProjectsResponse" } } } } }
+      }
+    },
+    "/api/v1/me/invitations": {
+      "get": {
+        "tags": ["Account"],
+        "summary": "Get invitations addressed to the authenticated user",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "In-app project invitation messages", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ProjectInvitation" } } } } } }
+      }
+    },
+    "/api/v1/projects": {
+      "post": {
+        "tags": ["Projects"],
+        "summary": "Create a project with the caller as owner and first partner",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateProjectRequest" } } } },
+        "responses": { "201": { "description": "Project created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } }, "401": { "description": "Unauthorized" } }
+      }
+    },
+    "/api/v1/projects/{projectId}": {
+      "get": {
+        "tags": ["Projects"],
+        "summary": "Get a project the caller is a partner in",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Project details", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } }, "404": { "description": "Project not found or caller is not a partner" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/members": {
+      "get": {
+        "tags": ["Projects"],
+        "summary": "List project partners",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Project partners", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ProjectMemberResponse" } } } } }, "404": { "description": "Project not found or caller is not a partner" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/invitations": {
+      "post": {
+        "tags": ["Projects"],
+        "summary": "Invite a registered user by username",
+        "description": "Only the project owner may invite; the invitation appears in the invitee's in-app inbox.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/InviteProjectPartnerRequest" } } } },
+        "responses": { "201": { "description": "Invitation created" }, "403": { "description": "Caller is not the owner" }, "409": { "description": "Already a partner or pending invitation exists" } }
+      }
+    },
+    "/api/v1/invitations/{invitationId}/respond": {
+      "post": {
+        "tags": ["Projects"],
+        "summary": "Accept or decline an invitation addressed to the caller",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "invitationId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RespondToInvitationRequest" } } } },
+        "responses": { "200": { "description": "Invitation response saved" }, "403": { "description": "Invitation belongs to another user" }, "409": { "description": "Invitation was already answered" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/expenses": {
+      "get": {
+        "tags": ["Projects", "Expenses"],
+        "summary": "List expenses belonging to an accessible project",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Project expenses", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Expense" } } } } }, "404": { "description": "Project not found or caller is not a partner" } }
+      },
+      "post": {
+        "tags": ["Projects", "Expenses"],
+        "summary": "Add a project expense split across current partners",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateExpenseRequest" } } } },
+        "responses": { "201": { "description": "Expense created with project-member splits" }, "404": { "description": "Project not found or caller is not a partner" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/expenses/{expenseId}": {
+      "delete": {
+        "tags": ["Projects", "Expenses"],
+        "summary": "Delete an expense from an accessible project",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "expenseId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "Deleted" }, "404": { "description": "Project or expense not found" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/tranches": {
+      "get": {
+        "tags": ["Projects", "Tranches"],
+        "summary": "List project tranche payments",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Project tranches", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/TranchePayment" } } } } }, "404": { "description": "Project not found or caller is not a partner" } }
+      },
+      "post": {
+        "tags": ["Projects", "Tranches"],
+        "summary": "Record a contribution for the authenticated partner",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateTrancheRequest" } } } },
+        "responses": { "201": { "description": "Contribution recorded" }, "403": { "description": "Partners may record only their own contributions" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/dashboard": {
+      "get": {
+        "tags": ["Projects", "Dashboard"],
+        "summary": "Get the accessible project's dashboard",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Project-scoped dashboard", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DashboardSummary" } } } }, "404": { "description": "Project not found or caller is not a partner" } }
+      }
+    },
+    "/api/v1/projects/{projectId}/revenue-split": {
+      "post": {
+        "tags": ["Projects", "Revenue Split"],
+        "summary": "Calculate a project-scoped revenue split",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RevenueSplitRequest" } } } },
+        "responses": { "200": { "description": "Project settlement calculation" }, "404": { "description": "Project not found or caller is not a partner" } }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": ["Health"],
@@ -336,7 +491,93 @@ val OPENAPI_SPEC_JSON: String = $$"""
     }
   },
   "components": {
+    "securitySchemes": {
+      "BearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
     "schemas": {
+      "ProjectUser": {
+        "type": "object",
+        "required": ["id", "username", "displayName", "email"],
+        "properties": {
+          "id": { "type": "string" },
+          "username": { "type": "string" },
+          "displayName": { "type": "string" },
+          "email": { "type": "string", "format": "email" }
+        }
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "ownerUserId": { "type": "string" },
+          "createdAtEpochMs": { "type": "integer", "format": "int64" }
+        }
+      },
+      "MyProjectsResponse": {
+        "type": "object",
+        "properties": {
+          "projects": { "type": "array", "items": { "$ref": "#/components/schemas/Project" } },
+          "defaultProjectId": { "type": "string", "nullable": true }
+        }
+      },
+      "ProjectMembership": {
+        "type": "object",
+        "properties": {
+          "projectId": { "type": "string" },
+          "userId": { "type": "string" },
+          "role": { "type": "string", "enum": ["OWNER", "PARTNER"] },
+          "joinedAtEpochMs": { "type": "integer", "format": "int64" }
+        }
+      },
+      "ProjectMemberResponse": {
+        "type": "object",
+        "properties": {
+          "user": { "$ref": "#/components/schemas/ProjectUser" },
+          "membership": { "$ref": "#/components/schemas/ProjectMembership" }
+        }
+      },
+      "ProjectInvitation": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "projectId": { "type": "string" },
+          "projectName": { "type": "string" },
+          "inviterUserId": { "type": "string" },
+          "inviterUsername": { "type": "string" },
+          "inviteeUserId": { "type": "string" },
+          "inviteeUsername": { "type": "string" },
+          "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "DECLINED"] },
+          "createdAtEpochMs": { "type": "integer", "format": "int64" }
+        }
+      },
+      "RegistrationRequest": {
+        "type": "object",
+        "required": ["username", "displayName"],
+        "properties": {
+          "username": { "type": "string", "minLength": 3, "maxLength": 32 },
+          "displayName": { "type": "string" }
+        }
+      },
+      "CreateProjectRequest": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "InviteProjectPartnerRequest": {
+        "type": "object",
+        "required": ["username"],
+        "properties": { "username": { "type": "string" } }
+      },
+      "RespondToInvitationRequest": {
+        "type": "object",
+        "required": ["accept"],
+        "properties": { "accept": { "type": "boolean" } }
+      },
       "CreateExpenseRequest": {
         "type": "object",
         "required": ["title", "category", "totalAmount", "transactionDate", "payingPartnerId"],
