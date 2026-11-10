@@ -83,10 +83,10 @@ self-bootstrapping wrappers for the Kotlin Toolchain:
 
 The web development server uses port `8080`; the API server uses port `8081`. The Android, iOS
 Simulator, and Web clients use their platform's local development address and open the same seeded
-demo workspace; users do not enter a service URL or bearer token. For a
-physical device or a deployed shared backend, configure the service endpoint once in the relevant
-platform build configuration rather than asking each user to supply it. The public demo token is
-development-only and must never be enabled in a production deployment.
+demo workspace; users do not enter a service URL or bearer token. Android defaults to the standard
+emulator host; contributors using a physical device can configure their local backend URL in the
+Git-ignored Android resource described in [`app/androidApp/README.md`](./app/androidApp/README.md).
+The public demo token is development-only and must never be enabled in a production deployment.
 
 ---
 
