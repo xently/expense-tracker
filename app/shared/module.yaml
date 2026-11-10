@@ -10,6 +10,7 @@ dependencies:
   - $compose.runtime
   - $compose.foundation
   - $compose.material3
+  - $libs.jetbrains.material3.window.size.class
   - $compose.ui
   - $compose.components.resources
   - $compose.preview
@@ -46,7 +47,7 @@ settings:
   ktor: enabled
   kotlin:
     serialization:
-      format: json
+      enabled: true
       version: 1.12.0
     ksp:
       processors:

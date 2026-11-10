@@ -1,5 +1,6 @@
 package co.ke.xently.expense.tracker
 
+import androidx.lifecycle.ViewModelStore
 import co.ke.xently.expense.tracker.data.ApiException
 import co.ke.xently.expense.tracker.data.CachedProjectMember
 import co.ke.xently.expense.tracker.data.CachedProjectSnapshot
@@ -9,6 +10,7 @@ import co.ke.xently.expense.tracker.data.InMemoryWorkspaceCache
 import co.ke.xently.expense.tracker.data.ProjectApi
 import co.ke.xently.expense.tracker.data.ProjectMemberResponse
 import co.ke.xently.expense.tracker.data.RevenueSplitPayload
+import co.ke.xently.expense.tracker.data.WorkspaceCache
 import co.ke.xently.expense.tracker.model.Expense
 import co.ke.xently.expense.tracker.model.ExpenseCategory
 import co.ke.xently.expense.tracker.model.MyProjectsResponse
@@ -23,16 +25,38 @@ import co.ke.xently.expense.tracker.model.TranchePayment
 import co.ke.xently.expense.tracker.viewmodel.NavigationTab
 import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceEvent
 import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceViewModel
-import co.ke.xently.expense.tracker.viewmodel.WorkspaceIssue
 import co.ke.xently.expense.tracker.viewmodel.WorkspaceForm
+import co.ke.xently.expense.tracker.viewmodel.WorkspaceIssue
 import co.ke.xently.expense.tracker.viewmodel.WorkspacePhase
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.LocalDate
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ProjectWorkspaceViewModelTest {
+    @BeforeTest
+    fun setMainDispatcher() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+    }
+
+    @AfterTest
+    fun resetMainDispatcher() {
+        Dispatchers.resetMain()
+    }
+
     @Test
     fun formEventsOpenAndDismissTheSharedExpenseAndPaymentForms() {
         val api = FakeProjectApi().apply { projects += project("form-project") }
@@ -52,6 +76,115 @@ class ProjectWorkspaceViewModelTest {
         viewModel.onEvent(ProjectWorkspaceEvent.BackToProjects)
         assertNull(viewModel.state.value.activeForm)
     }
+
+    @Test
+    fun refreshHasSeparateProgressAndIgnoresDuplicateRefreshes() {
+        val api = FakeProjectApi().apply { projects += project("refresh-project") }
+        val viewModel = ProjectWorkspaceViewModel(api)
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+        assertFalse(viewModel.state.value.isRefreshing)
+
+        val refreshGate = CompletableDeferred<Unit>()
+        api.getProjectsGate = refreshGate
+        viewModel.onEvent(ProjectWorkspaceEvent.Refresh)
+
+        assertTrue(viewModel.state.value.isRefreshing)
+        assertEquals(2, api.getProjectsCalls)
+        viewModel.onEvent(ProjectWorkspaceEvent.Refresh)
+        assertEquals(2, api.getProjectsCalls)
+
+        refreshGate.complete(Unit)
+
+        assertFalse(viewModel.state.value.isRefreshing)
+    }
+
+    @Test
+    fun requestErrorsCanBeDismissedAndReportedAgain() {
+        val api = FakeProjectApi().apply {
+            projects += project("error-project")
+            failMemberLoad = true
+        }
+        val viewModel = ProjectWorkspaceViewModel(api)
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+        assertEquals(WorkspaceIssue.RequestFailed(503), viewModel.state.value.error)
+
+        viewModel.onEvent(ProjectWorkspaceEvent.DismissMessage)
+        assertNull(viewModel.state.value.error)
+
+        viewModel.onEvent(ProjectWorkspaceEvent.Refresh)
+
+        assertEquals(WorkspaceIssue.RequestFailed(503), viewModel.state.value.error)
+        assertFalse(viewModel.state.value.isRefreshing)
+    }
+
+    @Test
+    fun clearingViewModelCancelsSuspendedRequestWithoutShowingAnError() {
+        val api = FakeProjectApi().apply { getProfileGate = CompletableDeferred() }
+        val viewModel = ProjectWorkspaceViewModel(api)
+        val viewModelStore = ViewModelStore()
+        viewModelStore.put("workspace", viewModel)
+
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+        assertTrue(viewModel.state.value.isLoading)
+
+        viewModelStore.clear()
+
+        assertTrue(api.profileRequestCancelled)
+        assertNull(viewModel.state.value.error)
+        assertFalse(viewModel.state.value.isLoading)
+    }
+
+    @Test
+    fun cancellationDuringCacheReadIsNotReportedAsARequestFailure() {
+        val api = FakeProjectApi().apply { projects += project("cache-read") }
+        val cache = object : WorkspaceCache {
+            override suspend fun read(projectId: String): CachedProjectSnapshot? {
+                throw CancellationException("cache read cancelled")
+            }
+
+            override suspend fun write(snapshot: CachedProjectSnapshot) = Unit
+
+            override suspend fun clear(projectId: String) = Unit
+        }
+        val viewModel = ProjectWorkspaceViewModel(api, cache)
+
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+
+        assertNull(viewModel.state.value.error)
+        assertFalse(viewModel.state.value.isLoading)
+    }
+
+    @Test
+    fun cancellationDuringCacheWriteIsNotReportedAsARequestFailure() {
+        val api = FakeProjectApi().apply { projects += project("cache-write") }
+        val cache = object : WorkspaceCache {
+            override suspend fun read(projectId: String): CachedProjectSnapshot? = null
+
+            override suspend fun write(snapshot: CachedProjectSnapshot) {
+                throw CancellationException("cache write cancelled")
+            }
+
+            override suspend fun clear(projectId: String) = Unit
+        }
+        val viewModel = ProjectWorkspaceViewModel(api, cache)
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+
+        viewModel.onEvent(
+            ProjectWorkspaceEvent.CreateExpense(
+                title = "Seed delivery",
+                category = ExpenseCategory.SEEDLINGS,
+                amount = 100.0,
+                date = LocalDate(2026, 5, 1),
+                payingPartnerId = USER.id,
+                notes = ""
+            )
+        )
+
+        assertEquals("expense-1", viewModel.state.value.expenses.single().id)
+        assertNull(viewModel.state.value.error)
+        assertFalse(viewModel.state.value.isLoading)
+    }
+
     @Test
     fun singleProjectIsSelectedAutomatically() {
         val api = FakeProjectApi().apply { projects += project("only") }
@@ -291,9 +424,19 @@ class ProjectWorkspaceViewModelTest {
         var lastTranchePayload: CreateTranchePayload? = null
         var lastRevenueProjectId: String? = null
         var lastRevenuePayload: RevenueSplitPayload? = null
+        var getProjectsGate: CompletableDeferred<Unit>? = null
+        var getProjectsCalls: Int = 0
+        var getProfileGate: CompletableDeferred<Unit>? = null
+        var profileRequestCancelled: Boolean = false
 
         override suspend fun getProfile(baseUrl: String, token: String): ProjectUser {
             if (profileNotFound) throw ApiException(404, "Profile not registered")
+            try {
+                getProfileGate?.await()
+            } catch (cancelled: CancellationException) {
+                profileRequestCancelled = true
+                throw cancelled
+            }
             return USER
         }
 
@@ -305,10 +448,14 @@ class ProjectWorkspaceViewModelTest {
         ) =
             USER.copy(username = username, displayName = displayName)
 
-        override suspend fun getProjects(baseUrl: String, token: String) = MyProjectsResponse(
-            projects = projects.toList(),
-            defaultProjectId = projects.singleOrNull()?.id
-        )
+        override suspend fun getProjects(baseUrl: String, token: String): MyProjectsResponse {
+            getProjectsCalls++
+            getProjectsGate?.await()
+            return MyProjectsResponse(
+                projects = projects.toList(),
+                defaultProjectId = projects.singleOrNull()?.id
+            )
+        }
 
         override suspend fun getInvitations(baseUrl: String, token: String) = invitations.toList()
 

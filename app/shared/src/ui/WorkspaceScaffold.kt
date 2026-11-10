@@ -25,6 +25,9 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -36,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -115,6 +119,16 @@ internal fun WorkspaceScaffold(
     var showOverflowMenu by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val latestOnEvent by rememberUpdatedState(onEvent)
+    val errorMessage = state.error?.let { issueLabel(it) }
+    val successMessage = state.message?.let { messageLabel(it) }
+    LaunchedEffect(errorMessage, successMessage) {
+        listOfNotNull(errorMessage, successMessage).forEach { snackbarHostState.showSnackbar(it) }
+        if (errorMessage != null || successMessage != null) {
+            latestOnEvent(ProjectWorkspaceEvent.DismissMessage)
+        }
+    }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val permanentDrawer = state.phase == WorkspacePhase.PROJECT &&
@@ -148,6 +162,7 @@ internal fun WorkspaceScaffold(
                         .fillMaxHeight(),
                     showBottomNavigation = false,
                     showNavigationButton = false,
+                    snackbarHostState = snackbarHostState,
                     showOverflowMenu = showOverflowMenu,
                     onOverflowMenuChange = { showOverflowMenu = it }
                 )
@@ -179,6 +194,7 @@ internal fun WorkspaceScaffold(
                     onEvent = onEvent,
                     showBottomNavigation = state.phase == WorkspacePhase.PROJECT,
                     showNavigationButton = state.phase == WorkspacePhase.PROJECT,
+                    snackbarHostState = snackbarHostState,
                     onOpenNavigation = { scope.launch { drawerState.open() } },
                     showOverflowMenu = showOverflowMenu,
                     onOverflowMenuChange = { showOverflowMenu = it }
@@ -196,6 +212,7 @@ private fun WorkspaceScaffoldLayout(
     modifier: Modifier = Modifier,
     showBottomNavigation: Boolean,
     showNavigationButton: Boolean,
+    snackbarHostState: SnackbarHostState,
     onOpenNavigation: () -> Unit = {},
     showOverflowMenu: Boolean,
     onOverflowMenuChange: (Boolean) -> Unit
@@ -232,7 +249,19 @@ private fun WorkspaceScaffoldLayout(
                     }
                 }
             }
-        }
+        },
+        snackbarHost = {
+            SnackbarHost(snackbarHostState) { snackbarData ->
+                val isError = state.error != null
+                Snackbar(
+                    snackbarData = snackbarData,
+                    containerColor = if (isError) MaterialTheme.colorScheme.errorContainer
+                    else MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = if (isError) MaterialTheme.colorScheme.onErrorContainer
+                    else MaterialTheme.colorScheme.inverseOnSurface
+                )
+            }
+        },
     ) { padding ->
         Column(
             Modifier
@@ -240,20 +269,6 @@ private fun WorkspaceScaffoldLayout(
                 .padding(padding)
         ) {
             if (state.isLoading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            state.error?.let { issue ->
-                Text(
-                    issueLabel(issue),
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(12.dp)
-                )
-            }
-            state.message?.let { message ->
-                Text(
-                    messageLabel(message),
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(12.dp)
-                )
-            }
             when (state.phase) {
                 WorkspacePhase.CREDENTIALS -> CredentialsScreen(state, onEvent)
                 WorkspacePhase.REGISTRATION -> RegistrationScreen(state, onEvent)

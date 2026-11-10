@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -24,6 +25,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -35,6 +37,7 @@ import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import co.ke.xently.expense.tracker.categoryLabel
+import co.ke.xently.expense.tracker.getPlatform
 import co.ke.xently.expense.tracker.model.ExpenseCategory
 import co.ke.xently.expense.tracker.resources.Res
 import co.ke.xently.expense.tracker.resources.category_amount_percent
@@ -43,6 +46,7 @@ import co.ke.xently.expense.tracker.resources.currency_amount
 import co.ke.xently.expense.tracker.resources.end_season_revenue_banner
 import co.ke.xently.expense.tracker.resources.financial_overview
 import co.ke.xently.expense.tracker.resources.log_expense
+import co.ke.xently.expense.tracker.resources.loading
 import co.ke.xently.expense.tracker.resources.metric_contribution_sources
 import co.ke.xently.expense.tracker.resources.metric_expense_operations
 import co.ke.xently.expense.tracker.resources.metric_monthly_due_date
@@ -70,10 +74,31 @@ import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceEvent
 import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceState
 import org.jetbrains.compose.resources.stringResource
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun DashboardScreen(
     state: ProjectWorkspaceState,
     onEvent: (ProjectWorkspaceEvent) -> Unit
+) {
+    val showWebRefreshAction = getPlatform().name == "Web"
+    if (showWebRefreshAction) {
+        DashboardContent(state, onEvent, showWebRefreshAction = true)
+    } else {
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = { onEvent(ProjectWorkspaceEvent.Refresh) },
+            modifier = Modifier.fillMaxSize()
+        ) {
+            DashboardContent(state, onEvent, showWebRefreshAction = false)
+        }
+    }
+}
+
+@Composable
+private fun DashboardContent(
+    state: ProjectWorkspaceState,
+    onEvent: (ProjectWorkspaceEvent) -> Unit,
+    showWebRefreshAction: Boolean
 ) {
     val (numPartners, dotSeparatedPartners) = remember(state.partners) {
         state.partners.size to state.partners.joinToString(" · ") { it.name }
@@ -166,6 +191,17 @@ internal fun DashboardScreen(
                             Text(stringResource(Res.string.pay_tranche))
                         }
                     }
+                }
+            }
+        }
+        if (showWebRefreshAction) {
+            item {
+                OutlinedButton(
+                    onClick = { onEvent(ProjectWorkspaceEvent.Refresh) },
+                    enabled = !state.isRefreshing,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(stringResource(if (state.isRefreshing) Res.string.loading else Res.string.refresh))
                 }
             }
         }
@@ -313,12 +349,6 @@ internal fun DashboardScreen(
                     ) { Text(stringResource(Res.string.review_revenue_split)) }
                 }
             }
-        }
-        item {
-            OutlinedButton(
-                onClick = { onEvent(ProjectWorkspaceEvent.Refresh) },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(stringResource(Res.string.refresh)) }
         }
     }
 }

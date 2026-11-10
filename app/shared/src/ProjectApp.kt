@@ -2,11 +2,16 @@ package co.ke.xently.expense.tracker
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -16,11 +21,18 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.windowsizeclass.ExperimentalMaterial3WindowSizeClassApi
+import androidx.compose.material3.windowsizeclass.WindowHeightSizeClass
+import androidx.compose.material3.windowsizeclass.WindowSizeClass
+import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -33,7 +45,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewDynamicColors
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.CreationExtras
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.savedstate.serialization.SavedStateConfiguration
@@ -79,7 +96,9 @@ import co.ke.xently.expense.tracker.resources.status_partial
 import co.ke.xently.expense.tracker.resources.tranche_amount
 import co.ke.xently.expense.tracker.resources.transaction_date
 import co.ke.xently.expense.tracker.theme.ExpenseTrackerTheme
+import co.ke.xently.expense.tracker.ui.EntryFormPresentation
 import co.ke.xently.expense.tracker.ui.PreviewFontScale
+import co.ke.xently.expense.tracker.ui.entryFormPresentation
 import co.ke.xently.expense.tracker.ui.WorkspaceScaffold
 import co.ke.xently.expense.tracker.ui.destination
 import co.ke.xently.expense.tracker.ui.previewWorkspaceState
@@ -94,6 +113,7 @@ import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
+import kotlin.reflect.KClass
 import org.jetbrains.compose.resources.stringResource
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
@@ -161,24 +181,38 @@ private object WorkspaceDi : KoinComponent {
                 single<ProjectApi> { KtorProjectApi() }
                 single<WorkspaceCache> { createWorkspaceCache() }
                 single<ThemePreferenceStore> { createThemePreferenceStore() }
-                single { ProjectWorkspaceViewModel(get(), get(), get()) }
+                factory { ProjectWorkspaceViewModel(get(), get(), get()) }
             })
         }.koin
     }
 
-    fun viewModel(): ProjectWorkspaceViewModel {
+    fun viewModelFactory(): ViewModelProvider.Factory {
         application
-        return get()
+        return object : ViewModelProvider.Factory {
+            override fun <T : ViewModel> create(
+                modelClass: KClass<T>,
+                extras: CreationExtras
+            ): T {
+                require(modelClass == ProjectWorkspaceViewModel::class) {
+                    "Unsupported ViewModel type: ${modelClass.simpleName}"
+                }
+                @Suppress("UNCHECKED_CAST")
+                return get<ProjectWorkspaceViewModel>() as T
+            }
+        }
     }
 }
 
 @Composable
 fun App() {
-    val workspace = remember { WorkspaceDi.viewModel() }
+    val workspace: ProjectWorkspaceViewModel = viewModel(
+        factory = remember { WorkspaceDi.viewModelFactory() }
+    )
     val state by workspace.state.collectAsState()
     ProjectAppContent(state, workspace::onEvent)
 }
 
+@OptIn(ExperimentalMaterial3WindowSizeClassApi::class)
 @Composable
 internal fun ProjectAppContent(
     state: ProjectWorkspaceState,
@@ -192,29 +226,52 @@ internal fun ProjectAppContent(
     }
 
     ExpenseTrackerTheme(darkTheme = darkTheme) {
-        val backStack = rememberNavBackStack(
-            workspaceNavigationConfiguration,
-            WorkspaceDestination.Dashboard
-        )
-        LaunchedEffect(state.selectedTab) {
-            val destination = state.selectedTab.destination()
-            if (backStack.lastOrNull() != destination) {
-                backStack.clear()
-                backStack.add(destination)
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val windowSizeClass = remember(maxWidth, maxHeight) {
+                WindowSizeClass.calculateFromSize(
+                    DpSize(maxWidth, maxHeight),
+                    supportedWidthSizeClasses = setOf(
+                        WindowWidthSizeClass.Compact,
+                        WindowWidthSizeClass.Medium,
+                        WindowWidthSizeClass.Expanded
+                    ),
+                    supportedHeightSizeClasses = setOf(
+                        WindowHeightSizeClass.Compact,
+                        WindowHeightSizeClass.Medium,
+                        WindowHeightSizeClass.Expanded
+                    )
+                )
             }
-        }
-        WorkspaceScaffold(state, backStack, onEvent)
-        if (state.phase == co.ke.xently.expense.tracker.viewmodel.WorkspacePhase.PROJECT) {
-            when (state.activeForm) {
-                WorkspaceForm.EXPENSE -> ExpenseDialog(state, onEvent) {
-                    onEvent(ProjectWorkspaceEvent.DismissForm)
+            val formPresentation = entryFormPresentation(windowSizeClass)
+            val backStack = rememberNavBackStack(
+                workspaceNavigationConfiguration,
+                WorkspaceDestination.Dashboard
+            )
+            LaunchedEffect(state.selectedTab) {
+                val destination = state.selectedTab.destination()
+                if (backStack.lastOrNull() != destination) {
+                    backStack.clear()
+                    backStack.add(destination)
                 }
+            }
+            WorkspaceScaffold(state, backStack, onEvent)
+            if (state.phase == co.ke.xently.expense.tracker.viewmodel.WorkspacePhase.PROJECT) {
+                when (state.activeForm) {
+                    WorkspaceForm.EXPENSE -> ExpenseDialog(
+                        state,
+                        onEvent,
+                        { onEvent(ProjectWorkspaceEvent.DismissForm) },
+                        formPresentation
+                    )
 
-                WorkspaceForm.TRANCHE -> TrancheDialog(onEvent) {
-                    onEvent(ProjectWorkspaceEvent.DismissForm)
+                    WorkspaceForm.TRANCHE -> TrancheDialog(
+                        onEvent,
+                        { onEvent(ProjectWorkspaceEvent.DismissForm) },
+                        formPresentation
+                    )
+
+                    null -> Unit
                 }
-
-                null -> Unit
             }
         }
     }
@@ -326,11 +383,13 @@ internal fun InvitePartnerForm(onEvent: (ProjectWorkspaceEvent) -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ExpenseDialog(
     state: ProjectWorkspaceState,
     onEvent: (ProjectWorkspaceEvent) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    presentation: EntryFormPresentation = EntryFormPresentation.DIALOG
 ) {
     var title by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
@@ -338,97 +397,245 @@ internal fun ExpenseDialog(
     var payer by remember { mutableStateOf(state.profile?.id.orEmpty()) }
     var notes by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(today()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(Res.string.log_expense)) },
-        text = {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
-                    OutlinedTextField(
-                        title,
-                        { title = it },
-                        label = { Text(stringResource(Res.string.expense_title)) })
-                }
-                item {
-                    OutlinedTextField(
-                        amount,
-                        { amount = it },
-                        label = { Text(stringResource(Res.string.amount_kes)) })
-                }
-                item { CategoryPicker(category) { category = it } }
-                item { PartnerPicker(state, payer) { payer = it } }
-                item {
-                    DatePickerField(stringResource(Res.string.transaction_date), date) {
-                        date = it
-                    }
-                }
-                item {
-                    OutlinedTextField(
-                        notes,
-                        { notes = it },
-                        label = { Text(stringResource(Res.string.notes)) })
-                }
+    val save: () -> Unit = {
+        val value = amount.toDoubleOrNull()
+        if (title.isNotBlank() && value != null && value > 0 && payer.isNotBlank()) {
+            onEvent(
+                ProjectWorkspaceEvent.CreateExpense(
+                    title,
+                    category,
+                    value,
+                    date,
+                    payer,
+                    notes
+                )
+            )
+            onDismiss()
+        }
+    }
+    if (presentation == EntryFormPresentation.MODAL_BOTTOM_SHEET) {
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = rememberBottomSheetState(
+                initialValue = SheetValue.Hidden,
+                enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded)
+            )
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(stringResource(Res.string.log_expense), style = MaterialTheme.typography.titleLarge)
+                ExpenseFormFields(
+                    state,
+                    title,
+                    { title = it },
+                    amount,
+                    { amount = it },
+                    category,
+                    { category = it },
+                    payer,
+                    { payer = it },
+                    date,
+                    { date = it },
+                    notes,
+                    { notes = it }
+                )
+                EntryFormActions(save, onDismiss)
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val value = amount.toDoubleOrNull()
-                if (title.isNotBlank() && value != null && value > 0 && payer.isNotBlank()) {
-                    onEvent(
-                        ProjectWorkspaceEvent.CreateExpense(
-                            title,
-                            category,
-                            value,
-                            date,
-                            payer,
-                            notes
-                        )
-                    )
-                    onDismiss()
-                }
-            }) { Text(stringResource(Res.string.save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) } }
-    )
+        }
+    } else {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(Res.string.log_expense)) },
+            text = {
+                ExpenseFormFields(
+                    state,
+                    title,
+                    { title = it },
+                    amount,
+                    { amount = it },
+                    category,
+                    { category = it },
+                    payer,
+                    { payer = it },
+                    date,
+                    { date = it },
+                    notes,
+                    { notes = it },
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                )
+            },
+            confirmButton = { TextButton(onClick = save) { Text(stringResource(Res.string.save)) } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) } }
+        )
+    }
 }
 
 @Composable
-internal fun TrancheDialog(onEvent: (ProjectWorkspaceEvent) -> Unit, onDismiss: () -> Unit) {
+private fun ExpenseFormFields(
+    state: ProjectWorkspaceState,
+    title: String,
+    onTitleChange: (String) -> Unit,
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    category: ExpenseCategory,
+    onCategoryChange: (ExpenseCategory) -> Unit,
+    payer: String,
+    onPayerChange: (String) -> Unit,
+    date: LocalDate,
+    onDateChange: (LocalDate) -> Unit,
+    notes: String,
+    onNotesChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            title,
+            onTitleChange,
+            label = { Text(stringResource(Res.string.expense_title)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            amount,
+            onAmountChange,
+            label = { Text(stringResource(Res.string.amount_kes)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        CategoryPicker(category, onCategoryChange)
+        PartnerPicker(state, payer, onPayerChange)
+        DatePickerField(stringResource(Res.string.transaction_date), date, onDateChange)
+        OutlinedTextField(
+            notes,
+            onNotesChange,
+            label = { Text(stringResource(Res.string.notes)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+private fun EntryFormActions(onSave: () -> Unit, onDismiss: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) }
+        TextButton(onClick = onSave) { Text(stringResource(Res.string.save)) }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun TrancheDialog(
+    onEvent: (ProjectWorkspaceEvent) -> Unit,
+    onDismiss: () -> Unit,
+    presentation: EntryFormPresentation = EntryFormPresentation.DIALOG
+) {
     var amount by remember { mutableStateOf("") }
     var reference by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var date by remember { mutableStateOf(today()) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(Res.string.record_tranche)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+    val save: () -> Unit = {
+        val value = amount.toDoubleOrNull()
+        if (value != null && value > 0) {
+            onEvent(ProjectWorkspaceEvent.CreateTranche(value, date, reference, notes))
+            onDismiss()
+        }
+    }
+    if (presentation == EntryFormPresentation.MODAL_BOTTOM_SHEET) {
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = rememberBottomSheetState(
+                initialValue = SheetValue.Hidden,
+                enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded)
+            )
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(stringResource(Res.string.record_tranche), style = MaterialTheme.typography.titleLarge)
+                TrancheFormFields(
                     amount,
                     { amount = it },
-                    label = { Text(stringResource(Res.string.tranche_amount)) })
-                DatePickerField(stringResource(Res.string.payment_date), date) { date = it }
-                OutlinedTextField(
+                    date,
+                    { date = it },
                     reference,
                     { reference = it },
-                    label = { Text(stringResource(Res.string.reference_number)) })
-                OutlinedTextField(
+                    notes,
+                    { notes = it }
+                )
+                EntryFormActions(save, onDismiss)
+            }
+        }
+    } else {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text(stringResource(Res.string.record_tranche)) },
+            text = {
+                TrancheFormFields(
+                    amount,
+                    { amount = it },
+                    date,
+                    { date = it },
+                    reference,
+                    { reference = it },
                     notes,
                     { notes = it },
-                    label = { Text(stringResource(Res.string.notes)) })
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                val value = amount.toDoubleOrNull()
-                if (value != null && value > 0) {
-                    onEvent(ProjectWorkspaceEvent.CreateTranche(value, date, reference, notes))
-                    onDismiss()
-                }
-            }) { Text(stringResource(Res.string.save)) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) } }
-    )
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp)
+                        .verticalScroll(rememberScrollState())
+                )
+            },
+            confirmButton = { TextButton(onClick = save) { Text(stringResource(Res.string.save)) } },
+            dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) } }
+        )
+    }
+}
+
+@Composable
+private fun TrancheFormFields(
+    amount: String,
+    onAmountChange: (String) -> Unit,
+    date: LocalDate,
+    onDateChange: (LocalDate) -> Unit,
+    reference: String,
+    onReferenceChange: (String) -> Unit,
+    notes: String,
+    onNotesChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            amount,
+            onAmountChange,
+            label = { Text(stringResource(Res.string.tranche_amount)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        DatePickerField(stringResource(Res.string.payment_date), date, onDateChange)
+        OutlinedTextField(
+            reference,
+            onReferenceChange,
+            label = { Text(stringResource(Res.string.reference_number)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            notes,
+            onNotesChange,
+            label = { Text(stringResource(Res.string.notes)) },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
 }
 
 @Composable

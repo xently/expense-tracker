@@ -1,6 +1,7 @@
 package co.ke.xently.expense.tracker.viewmodel
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import co.ke.xently.expense.tracker.calculator.LedgerCalculator
 import co.ke.xently.expense.tracker.calculator.RevenueSplitCalculator
 import co.ke.xently.expense.tracker.data.ApiException
@@ -25,10 +26,7 @@ import co.ke.xently.expense.tracker.model.ProjectMembership
 import co.ke.xently.expense.tracker.model.ProjectUser
 import co.ke.xently.expense.tracker.model.SeasonRevenueCalculation
 import co.ke.xently.expense.tracker.model.TranchePayment
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,6 +93,7 @@ data class ProjectWorkspaceState(
     val selectedTab: NavigationTab = NavigationTab.DASHBOARD,
     val themePreference: ThemePreference = ThemePreference.SYSTEM,
     val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
     val error: WorkspaceIssue? = null,
     val message: WorkspaceMessage? = null,
     val activeForm: WorkspaceForm? = null,
@@ -169,15 +168,14 @@ sealed interface ProjectWorkspaceEvent {
 class ProjectWorkspaceViewModel(
     private val api: ProjectApi,
     private val cache: WorkspaceCache = InMemoryWorkspaceCache(),
-    private val themePreferenceStore: ThemePreferenceStore? = null,
-    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+    private val themePreferenceStore: ThemePreferenceStore? = null
 ) : ViewModel() {
     private val _state = MutableStateFlow(ProjectWorkspaceState())
     val state: StateFlow<ProjectWorkspaceState> = _state.asStateFlow()
 
     init {
         themePreferenceStore?.let { store ->
-            scope.launch {
+            viewModelScope.launch {
                 store.preference.collect { saved ->
                     _state.update { it.copy(themePreference = saved.toThemePreference()) }
                 }
@@ -217,7 +215,7 @@ class ProjectWorkspaceViewModel(
             is ProjectWorkspaceEvent.SetTheme -> {
                 _state.update { it.copy(themePreference = event.preference) }
                 themePreferenceStore?.let { store ->
-                    scope.launch { store.save(event.preference.toSavedThemePreference()) }
+                    viewModelScope.launch { store.save(event.preference.toSavedThemePreference()) }
                 }
             }
 
@@ -325,6 +323,8 @@ class ProjectWorkspaceViewModel(
         val current = _state.value
         val cached = try {
             cache.read(projectId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Throwable) {
             null
         }
@@ -468,6 +468,8 @@ class ProjectWorkspaceViewModel(
                     tranches = current.tranches
                 )
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Throwable) {
             // A cache write must not turn a successful server write into a reported failure.
         }
@@ -475,8 +477,8 @@ class ProjectWorkspaceViewModel(
 
     private fun refresh() {
         val current = _state.value
-        if (current.profile == null) return
-        launchRequest { loadWorkspace() }
+        if (current.profile == null || current.isRefreshing) return
+        launchRequest(isRefreshing = true) { loadWorkspace() }
     }
 
     private fun calculateRevenueSplit() {
@@ -505,23 +507,34 @@ class ProjectWorkspaceViewModel(
         }
     }
 
-    private fun launchRequest(block: suspend () -> Unit) {
-        scope.launch {
-            _state.update { it.copy(isLoading = true, error = null, message = null) }
+    private fun launchRequest(isRefreshing: Boolean = false, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    isLoading = true,
+                    isRefreshing = it.isRefreshing || isRefreshing,
+                    error = null,
+                    message = null
+                )
+            }
             try {
                 block()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (failure: Throwable) {
                 val issue = WorkspaceIssue.RequestFailed((failure as? ApiException)?.statusCode)
                 _state.update { it.copy(error = issue) }
             } finally {
-                _state.update { it.copy(isLoading = false) }
+                _state.update {
+                    it.copy(
+                        isLoading = false,
+                        isRefreshing = !isRefreshing && it.isRefreshing
+                    )
+                }
             }
         }
     }
 
-    override fun onCleared() {
-        scope.cancel()
-    }
 }
 
 private fun SavedThemePreference.toThemePreference(): ThemePreference = when (this) {
