@@ -32,6 +32,7 @@ test-dependencies:
   - $libs.kotlinx.coroutines.test
 
 dependencies@android:
+  - $libs.androidx.activity.compose
   - $compose.uiTooling
   - $libs.androidx.sqlite.bundled
   - $ktor.client.cio

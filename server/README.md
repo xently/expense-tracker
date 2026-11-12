@@ -115,6 +115,21 @@ already registered username. Invitations are available as in-app messages throug
 | `GET`          | `/api/v1/projects/{projectId}/dashboard`            | Calculate project-only ledger and dashboard totals                            |
 | `POST`         | `/api/v1/projects/{projectId}/revenue-split`        | Calculate the project's payout split                                          |
 
+Projects may include an `expenseCategories` array when created. Category names are trimmed and
+must be nonblank and unique without regard to case. Expenses in a project with configured
+categories must include a matching `categoryName`; the server stores the configured spelling and
+rejects names from other projects. Omit the array (or send an empty array) to keep using legacy
+`ExpenseCategory` values. Historical expenses without `categoryName` remain valid, and dashboard
+category totals are exposed by name in `categoryBreakdownsByName`.
+
+```json
+{
+  "name": "Community orchard",
+  "description": "Shared growing project",
+  "expenseCategories": ["Soil testing", "Seedlings", "Tools"]
+}
+```
+
 ### Legacy Endpoints Overview
 
 The following legacy routes are not registered unless `app.enableLegacyFinanceRoutes: true` is set

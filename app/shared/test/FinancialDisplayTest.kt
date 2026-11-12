@@ -49,6 +49,61 @@ class FinancialDisplayTest {
     }
 
     @Test
+    fun customCategoryNamesRemainDistinctInExpenseFiltering() {
+        val expenses = listOf(
+            expense(
+                "soil",
+                ExpenseCategory.MISCELLANEOUS,
+                1200.0
+            ).copy(categoryName = "Soil testing"),
+            expense("tools", ExpenseCategory.MISCELLANEOUS, 800.0).copy(categoryName = "Tools")
+        )
+
+        assertEquals(
+            listOf("soil"),
+            filterExpensesByCategoryName(expenses, "Soil testing").map { it.id })
+        assertEquals(listOf("tools"), filterExpensesByCategoryName(expenses, "Tools").map { it.id })
+    }
+
+    @Test
+    fun historicalAndCustomCategoriesRemainDistinctAndSelectable() {
+        val expenses = listOf(
+            expense("old", ExpenseCategory.MISCELLANEOUS, 100.0),
+            expense(
+                "new",
+                ExpenseCategory.MISCELLANEOUS,
+                200.0
+            ).copy(categoryName = "MISCELLANEOUS"),
+            expense(
+                "archived",
+                ExpenseCategory.MISCELLANEOUS,
+                300.0
+            ).copy(categoryName = "Old custom")
+        )
+        val options = expenseCategoryOptions(listOf("MISCELLANEOUS"), expenses)
+
+        assertEquals(3, options.size)
+        assertEquals(
+            listOf("old"),
+            filterExpensesByCategoryKey(
+                expenses,
+                DisplayCategory.Legacy(ExpenseCategory.MISCELLANEOUS)
+            ).map { it.id })
+        assertEquals(
+            listOf("new"),
+            filterExpensesByCategoryKey(
+                expenses,
+                DisplayCategory.Project("MISCELLANEOUS")
+            ).map { it.id })
+        assertEquals(
+            listOf("archived"),
+            filterExpensesByCategoryKey(
+                expenses,
+                DisplayCategory.Project("Old custom")
+            ).map { it.id })
+    }
+
+    @Test
     fun categoryProgressIsBoundedToAValidFraction() {
         assertEquals(0.25f, categorySpendProgress(categoryTotal = 25.0, totalExpenses = 100.0))
         assertEquals(1f, categorySpendProgress(categoryTotal = 120.0, totalExpenses = 100.0))

@@ -38,15 +38,14 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import co.ke.xently.expense.tracker.categoryLabel
 import co.ke.xently.expense.tracker.getPlatform
-import co.ke.xently.expense.tracker.model.ExpenseCategory
 import co.ke.xently.expense.tracker.resources.Res
 import co.ke.xently.expense.tracker.resources.category_amount_percent
 import co.ke.xently.expense.tracker.resources.category_breakdown
 import co.ke.xently.expense.tracker.resources.currency_amount
 import co.ke.xently.expense.tracker.resources.end_season_revenue_banner
 import co.ke.xently.expense.tracker.resources.financial_overview
-import co.ke.xently.expense.tracker.resources.log_expense
 import co.ke.xently.expense.tracker.resources.loading
+import co.ke.xently.expense.tracker.resources.log_expense
 import co.ke.xently.expense.tracker.resources.metric_contribution_sources
 import co.ke.xently.expense.tracker.resources.metric_expense_operations
 import co.ke.xently.expense.tracker.resources.metric_monthly_due_date
@@ -104,7 +103,7 @@ private fun DashboardContent(
         state.partners.size to state.partners.joinToString(" · ") { it.name }
     }
     val totals = financialOverviewTotals(state.expenses, state.partnerSummaries)
-    val categoryTotals = state.expenses.groupBy { it.category }
+    val categoryTotals = state.expenses.groupBy(::expenseCategoryKey)
         .map { (category, expenses) -> category to expenses.sumOf { it.totalAmount } }
         .filter { it.second > 0.0 }
         .sortedByDescending { it.second }
@@ -355,7 +354,7 @@ private fun DashboardContent(
 
 @Composable
 private fun CategorySpendRow(
-    category: ExpenseCategory,
+    category: DisplayCategory,
     amount: Double,
     progress: Float,
     modifier: Modifier = Modifier,
@@ -366,7 +365,10 @@ private fun CategorySpendRow(
         Text(
             stringResource(
                 Res.string.category_amount_percent,
-                categoryLabel(category),
+                when (category) {
+                    is DisplayCategory.Project -> category.name
+                    is DisplayCategory.Legacy -> categoryLabel(category.category)
+                },
                 stringResource(Res.string.currency_amount, amount.toLong().toString()),
                 percentage
             ),

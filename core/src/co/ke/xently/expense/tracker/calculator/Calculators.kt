@@ -189,6 +189,11 @@ object LedgerCalculator {
             ExpenseCalculator.roundDouble(expenses.filter { it.category == cat }
                 .sumOf { it.totalAmount })
         }
+        val categoryBreakdownsByName =
+            expenses.groupBy { it.categoryName ?: it.category.displayName }
+                .mapValues { (_, groupedExpenses) ->
+                    ExpenseCalculator.roundDouble(groupedExpenses.sumOf { it.totalAmount })
+                }
 
         return DashboardSummary(
             totalExpenses = totalExpenses,
@@ -199,7 +204,8 @@ object LedgerCalculator {
             categoryBreakdowns = categoryBreakdowns,
             recentExpenses = expenses.sortedByDescending { it.transactionDate }.take(10),
             recentTranches = tranches.sortedByDescending { it.paymentDate }.take(10),
-            notifications = notifications.sortedByDescending { it.timestampEpochMs }.take(10)
+            notifications = notifications.sortedByDescending { it.timestampEpochMs }.take(10),
+            categoryBreakdownsByName = categoryBreakdownsByName
         )
     }
 }

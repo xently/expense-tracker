@@ -21,7 +21,7 @@ dependencies:
 settings:
   ktor: enabled
   kotlin:
-    serialization: json
+    serialization: enabled
   jvm:
     mainClass: co.ke.xently.expense.tracker.server.ApplicationKt
 

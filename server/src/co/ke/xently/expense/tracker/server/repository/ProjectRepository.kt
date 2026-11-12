@@ -49,7 +49,12 @@ interface ProjectRepository {
     suspend fun registerUser(user: ProjectUser): RegistrationResult
     suspend fun getUserById(userId: String): ProjectUser?
     suspend fun getUserByUsername(username: String): ProjectUser?
-    suspend fun createProject(ownerUserId: String, name: String, description: String): Project?
+    suspend fun createProject(
+        ownerUserId: String,
+        name: String,
+        description: String,
+        expenseCategories: List<String> = emptyList()
+    ): Project?
     suspend fun getProjectsForUser(userId: String): List<Project>
     suspend fun getProjectForMember(projectId: String, userId: String): Project?
     suspend fun getMemberships(
@@ -119,16 +124,20 @@ class InMemoryProjectRepository : ProjectRepository {
     override suspend fun createProject(
         ownerUserId: String,
         name: String,
-        description: String
+        description: String,
+        expenseCategories: List<String>
     ): Project? =
         mutex.withLock {
             if (ownerUserId !in users) return@withLock null
+            val normalizedCategories =
+                normalizeExpenseCategories(expenseCategories) ?: return@withLock null
             val project = Project(
                 id = UUID.randomUUID().toString(),
                 name = name.trim(),
                 description = description.trim(),
                 ownerUserId = ownerUserId,
-                createdAtEpochMs = System.currentTimeMillis()
+                createdAtEpochMs = System.currentTimeMillis(),
+                expenseCategories = normalizedCategories
             )
             projects[project.id] = project
             memberships.getOrPut(project.id, ::mutableMapOf)[ownerUserId] = ProjectMembership(
@@ -246,7 +255,21 @@ class InMemoryProjectRepository : ProjectRepository {
     ): Expense? =
         mutex.withLock {
             val projectMembers = memberships[projectId] ?: return@withLock null
+            val project = projects[projectId] ?: return@withLock null
             if (userId !in projectMembers || expense.payingPartnerId !in projectMembers) return@withLock null
+            val categoryName = if (project.expenseCategories.isEmpty()) {
+                if (expense.categoryName != null) return@withLock null
+                null
+            } else {
+                val requestedCategory = expense.categoryName?.trim() ?: return@withLock null
+                project.expenseCategories.firstOrNull {
+                    it.equals(
+                        requestedCategory,
+                        ignoreCase = true
+                    )
+                }
+                    ?: return@withLock null
+            }
             val partners = projectMembers.keys.mapNotNull(users::get).map { user ->
                 co.ke.xently.expense.tracker.model.Partner(
                     id = user.id,
@@ -255,6 +278,7 @@ class InMemoryProjectRepository : ProjectRepository {
                 )
             }
             val projectExpense = expense.copy(
+                categoryName = categoryName,
                 splits = ExpenseCalculator.calculateSplits(
                     expense.totalAmount,
                     expense.transactionDate,
@@ -292,4 +316,12 @@ class InMemoryProjectRepository : ProjectRepository {
     }
 
     private fun normalizeUsername(username: String): String = username.trim().lowercase()
+}
+
+fun normalizeExpenseCategories(categories: List<String>): List<String>? {
+    val normalized = categories.map(String::trim)
+    if (normalized.any(String::isEmpty) || normalized.distinctBy { it.lowercase() }.size != normalized.size) {
+        return null
+    }
+    return normalized
 }

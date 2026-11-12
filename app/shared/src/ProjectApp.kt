@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -24,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,8 +41,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewDynamicColors
 import androidx.compose.ui.tooling.preview.PreviewLightDark
@@ -98,27 +103,29 @@ import co.ke.xently.expense.tracker.resources.transaction_date
 import co.ke.xently.expense.tracker.theme.ExpenseTrackerTheme
 import co.ke.xently.expense.tracker.ui.EntryFormPresentation
 import co.ke.xently.expense.tracker.ui.PreviewFontScale
-import co.ke.xently.expense.tracker.ui.entryFormPresentation
 import co.ke.xently.expense.tracker.ui.WorkspaceScaffold
 import co.ke.xently.expense.tracker.ui.destination
+import co.ke.xently.expense.tracker.ui.entryFormPresentation
 import co.ke.xently.expense.tracker.ui.previewWorkspaceState
 import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceEvent
 import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceState
 import co.ke.xently.expense.tracker.viewmodel.ProjectWorkspaceViewModel
 import co.ke.xently.expense.tracker.viewmodel.ThemePreference
 import co.ke.xently.expense.tracker.viewmodel.WorkspaceForm
+import co.ke.xently.expense.tracker.viewmodel.WorkspacePhase
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.todayIn
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
-import kotlin.reflect.KClass
 import org.jetbrains.compose.resources.stringResource
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.get
 import org.koin.core.context.startKoin
 import org.koin.dsl.module
+import kotlin.reflect.KClass
 import kotlin.time.Clock
 import kotlin.time.Instant
 
@@ -218,6 +225,11 @@ internal fun ProjectAppContent(
     state: ProjectWorkspaceState,
     onEvent: (ProjectWorkspaceEvent) -> Unit
 ) {
+    PlatformBackHandler(
+        enabled = state.phase == WorkspacePhase.PROJECTS &&
+                state.selectedProjectId != null,
+        onBack = { onEvent(ProjectWorkspaceEvent.ReturnToProject) }
+    )
     val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val darkTheme = when (state.themePreference) {
         ThemePreference.SYSTEM -> isSystemDark
@@ -255,19 +267,19 @@ internal fun ProjectAppContent(
                 }
             }
             WorkspaceScaffold(state, backStack, onEvent)
-            if (state.phase == co.ke.xently.expense.tracker.viewmodel.WorkspacePhase.PROJECT) {
+            if (state.phase == WorkspacePhase.PROJECT) {
                 when (state.activeForm) {
                     WorkspaceForm.EXPENSE -> ExpenseDialog(
-                        state,
-                        onEvent,
-                        { onEvent(ProjectWorkspaceEvent.DismissForm) },
-                        formPresentation
+                        state = state,
+                        onEvent = onEvent,
+                        onDismiss = { onEvent(ProjectWorkspaceEvent.DismissForm) },
+                        presentation = formPresentation
                     )
 
                     WorkspaceForm.TRANCHE -> TrancheDialog(
-                        onEvent,
-                        { onEvent(ProjectWorkspaceEvent.DismissForm) },
-                        formPresentation
+                        onEvent = onEvent,
+                        onDismiss = { onEvent(ProjectWorkspaceEvent.DismissForm) },
+                        presentation = formPresentation
                     )
 
                     null -> Unit
@@ -291,16 +303,16 @@ internal fun InvitationCard(
                 Button(onClick = {
                     onEvent(
                         ProjectWorkspaceEvent.RespondToInvitation(
-                            invitation.id,
-                            true
+                            invitationId = invitation.id,
+                            accept = true
                         )
                     )
                 }) { Text(stringResource(Res.string.accept)) }
                 OutlinedButton(onClick = {
                     onEvent(
                         ProjectWorkspaceEvent.RespondToInvitation(
-                            invitation.id,
-                            false
+                            invitationId = invitation.id,
+                            accept = false
                         )
                     )
                 }) { Text(stringResource(Res.string.decline)) }
@@ -316,7 +328,7 @@ internal fun InvitationCard(
 @Composable
 private fun ProjectAppWorkspacePreview() {
     var state by remember {
-        mutableStateOf(previewWorkspaceState.copy(phase = co.ke.xently.expense.tracker.viewmodel.WorkspacePhase.PROJECT))
+        mutableStateOf(previewWorkspaceState.copy(phase = WorkspacePhase.PROJECT))
     }
     ProjectAppContent(state) { event ->
         if (event is ProjectWorkspaceEvent.SelectTab) {
@@ -391,23 +403,26 @@ internal fun ExpenseDialog(
     onDismiss: () -> Unit,
     presentation: EntryFormPresentation = EntryFormPresentation.DIALOG
 ) {
-    var title by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf(ExpenseCategory.MISCELLANEOUS) }
-    var payer by remember { mutableStateOf(state.profile?.id.orEmpty()) }
-    var notes by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(today()) }
+    var title by rememberSaveable { mutableStateOf("") }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var category by rememberSaveable { mutableStateOf(ExpenseCategory.MISCELLANEOUS) }
+    val projectCategories = state.selectedProject?.expenseCategories.orEmpty()
+    var categoryName by rememberSaveable { mutableStateOf(projectCategories.firstOrNull()) }
+    var payer by rememberSaveable { mutableStateOf(state.profile?.id.orEmpty()) }
+    var notes by rememberSaveable { mutableStateOf("") }
+    var date by rememberSaveable { mutableStateOf(today()) }
     val save: () -> Unit = {
         val value = amount.toDoubleOrNull()
         if (title.isNotBlank() && value != null && value > 0 && payer.isNotBlank()) {
             onEvent(
                 ProjectWorkspaceEvent.CreateExpense(
-                    title,
-                    category,
-                    value,
-                    date,
-                    payer,
-                    notes
+                    title = title,
+                    category = category,
+                    amount = value,
+                    date = date,
+                    payingPartnerId = payer,
+                    notes = notes,
+                    categoryName = categoryName
                 )
             )
             onDismiss()
@@ -431,21 +446,24 @@ internal fun ExpenseDialog(
             ) {
                 Text(stringResource(Res.string.log_expense), style = MaterialTheme.typography.titleLarge)
                 ExpenseFormFields(
-                    state,
-                    title,
-                    { title = it },
-                    amount,
-                    { amount = it },
-                    category,
-                    { category = it },
-                    payer,
-                    { payer = it },
-                    date,
-                    { date = it },
-                    notes,
-                    { notes = it }
+                    state = state,
+                    title = title,
+                    onTitleChange = { title = it },
+                    amount = amount,
+                    onAmountChange = { amount = it },
+                    category = category,
+                    onCategoryChange = { category = it },
+                    projectCategories = projectCategories,
+                    categoryName = categoryName,
+                    onCategoryNameChange = { categoryName = it },
+                    payer = payer,
+                    onPayerChange = { payer = it },
+                    date = date,
+                    onDateChange = { date = it },
+                    notes = notes,
+                    onNotesChange = { notes = it },
                 )
-                EntryFormActions(save, onDismiss)
+                EntryFormActions(onSave = save, onDismiss = onDismiss)
             }
         }
     } else {
@@ -454,26 +472,29 @@ internal fun ExpenseDialog(
             title = { Text(stringResource(Res.string.log_expense)) },
             text = {
                 ExpenseFormFields(
-                    state,
-                    title,
-                    { title = it },
-                    amount,
-                    { amount = it },
-                    category,
-                    { category = it },
-                    payer,
-                    { payer = it },
-                    date,
-                    { date = it },
-                    notes,
-                    { notes = it },
-                    Modifier
+                    state = state,
+                    title = title,
+                    onTitleChange = { title = it },
+                    amount = amount,
+                    onAmountChange = { amount = it },
+                    category = category,
+                    onCategoryChange = { category = it },
+                    projectCategories = projectCategories,
+                    categoryName = categoryName,
+                    onCategoryNameChange = { categoryName = it },
+                    payer = payer,
+                    onPayerChange = { payer = it },
+                    date = date,
+                    onDateChange = { date = it },
+                    notes = notes,
+                    onNotesChange = { notes = it },
+                    modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 400.dp)
                         .verticalScroll(rememberScrollState())
                 )
             },
-            confirmButton = { TextButton(onClick = save) { Text(stringResource(Res.string.save)) } },
+            confirmButton = { Button(onClick = save) { Text(stringResource(Res.string.save)) } },
             dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) } }
         )
     }
@@ -488,6 +509,9 @@ private fun ExpenseFormFields(
     onAmountChange: (String) -> Unit,
     category: ExpenseCategory,
     onCategoryChange: (ExpenseCategory) -> Unit,
+    projectCategories: List<String>,
+    categoryName: String?,
+    onCategoryNameChange: (String) -> Unit,
     payer: String,
     onPayerChange: (String) -> Unit,
     date: LocalDate,
@@ -498,23 +522,45 @@ private fun ExpenseFormFields(
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
-            title,
-            onTitleChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions.Default.copy(
+                imeAction = ImeAction.Next,
+            ),
+            value = title,
+            onValueChange = onTitleChange,
             label = { Text(stringResource(Res.string.expense_title)) },
             modifier = Modifier.fillMaxWidth()
         )
         OutlinedTextField(
-            amount,
-            onAmountChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions.Default.copy(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Next,
+            ),
+            value = amount,
+            onValueChange = onAmountChange,
             label = { Text(stringResource(Res.string.amount_kes)) },
             modifier = Modifier.fillMaxWidth()
         )
-        CategoryPicker(category, onCategoryChange)
-        PartnerPicker(state, payer, onPayerChange)
-        DatePickerField(stringResource(Res.string.transaction_date), date, onDateChange)
+        if (projectCategories.isEmpty()) {
+            CategoryPicker(category = category, onSelect = onCategoryChange)
+        } else {
+            ProjectCategoryPicker(
+                categories = projectCategories,
+                selectedCategory = categoryName,
+                onSelect = onCategoryNameChange,
+            )
+        }
+        PartnerPicker(state = state, partnerId = payer, onSelect = onPayerChange)
+        DatePickerField(
+            label = stringResource(Res.string.transaction_date),
+            selected = date,
+            onSelect = onDateChange
+        )
         OutlinedTextField(
-            notes,
-            onNotesChange,
+            maxLines = 4,
+            value = notes,
+            onValueChange = onNotesChange,
             label = { Text(stringResource(Res.string.notes)) },
             modifier = Modifier.fillMaxWidth()
         )
@@ -523,9 +569,15 @@ private fun ExpenseFormFields(
 
 @Composable
 private fun EntryFormActions(onSave: () -> Unit, onDismiss: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) }
-        TextButton(onClick = onSave) { Text(stringResource(Res.string.save)) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            modifier = Modifier.weight(1f),
+            onClick = onDismiss,
+        ) { Text(stringResource(Res.string.cancel)) }
+        Button(
+            modifier = Modifier.weight(1f),
+            onClick = onSave,
+        ) { Text(stringResource(Res.string.save)) }
     }
 }
 
@@ -536,14 +588,21 @@ internal fun TrancheDialog(
     onDismiss: () -> Unit,
     presentation: EntryFormPresentation = EntryFormPresentation.DIALOG
 ) {
-    var amount by remember { mutableStateOf("") }
-    var reference by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf(today()) }
+    var amount by rememberSaveable { mutableStateOf("") }
+    var reference by rememberSaveable { mutableStateOf("") }
+    var notes by rememberSaveable { mutableStateOf("") }
+    var date by rememberSaveable { mutableStateOf(today()) }
     val save: () -> Unit = {
         val value = amount.toDoubleOrNull()
         if (value != null && value > 0) {
-            onEvent(ProjectWorkspaceEvent.CreateTranche(value, date, reference, notes))
+            onEvent(
+                ProjectWorkspaceEvent.CreateTranche(
+                    amount = value,
+                    date = date,
+                    referenceNumber = reference,
+                    notes = notes
+                )
+            )
             onDismiss()
         }
     }
@@ -553,7 +612,7 @@ internal fun TrancheDialog(
             sheetState = rememberBottomSheetState(
                 initialValue = SheetValue.Hidden,
                 enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded)
-            )
+            ),
         ) {
             Column(
                 Modifier
@@ -565,16 +624,16 @@ internal fun TrancheDialog(
             ) {
                 Text(stringResource(Res.string.record_tranche), style = MaterialTheme.typography.titleLarge)
                 TrancheFormFields(
-                    amount,
-                    { amount = it },
-                    date,
-                    { date = it },
-                    reference,
-                    { reference = it },
-                    notes,
-                    { notes = it }
+                    amount = amount,
+                    onAmountChange = { amount = it },
+                    date = date,
+                    onDateChange = { date = it },
+                    reference = reference,
+                    onReferenceChange = { reference = it },
+                    notes = notes,
+                    onNotesChange = { notes = it },
                 )
-                EntryFormActions(save, onDismiss)
+                EntryFormActions(onSave = save, onDismiss = onDismiss)
             }
         }
     } else {
@@ -583,21 +642,21 @@ internal fun TrancheDialog(
             title = { Text(stringResource(Res.string.record_tranche)) },
             text = {
                 TrancheFormFields(
-                    amount,
-                    { amount = it },
-                    date,
-                    { date = it },
-                    reference,
-                    { reference = it },
-                    notes,
-                    { notes = it },
-                    Modifier
+                    amount = amount,
+                    onAmountChange = { amount = it },
+                    date = date,
+                    onDateChange = { date = it },
+                    reference = reference,
+                    onReferenceChange = { reference = it },
+                    notes = notes,
+                    onNotesChange = { notes = it },
+                    modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 400.dp)
                         .verticalScroll(rememberScrollState())
                 )
             },
-            confirmButton = { TextButton(onClick = save) { Text(stringResource(Res.string.save)) } },
+            confirmButton = { Button(onClick = save) { Text(stringResource(Res.string.save)) } },
             dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(Res.string.cancel)) } }
         )
     }
@@ -617,21 +676,32 @@ private fun TrancheFormFields(
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedTextField(
-            amount,
-            onAmountChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions.Default.copy(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Next,
+            ),
+            value = amount,
+            onValueChange = onAmountChange,
             label = { Text(stringResource(Res.string.tranche_amount)) },
             modifier = Modifier.fillMaxWidth()
         )
         DatePickerField(stringResource(Res.string.payment_date), date, onDateChange)
         OutlinedTextField(
-            reference,
-            onReferenceChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions.Default.copy(
+                imeAction = ImeAction.Done,
+                autoCorrectEnabled = false,
+            ),
+            value = reference,
+            onValueChange = onReferenceChange,
             label = { Text(stringResource(Res.string.reference_number)) },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
         )
         OutlinedTextField(
-            notes,
-            onNotesChange,
+            maxLines = 4,
+            value = notes,
+            onValueChange = onNotesChange,
             label = { Text(stringResource(Res.string.notes)) },
             modifier = Modifier.fillMaxWidth()
         )
@@ -650,6 +720,28 @@ private fun CategoryPicker(category: ExpenseCategory, onSelect: (ExpenseCategory
                 DropdownMenuItem(
                     text = { Text(categoryLabel(entry)) },
                     onClick = { onSelect(entry); expanded = false })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectCategoryPicker(
+    categories: List<String>,
+    selectedCategory: String?,
+    onSelect: (String) -> Unit
+) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Box {
+        OutlinedButton(onClick = { expanded = true }) {
+            Text("${stringResource(Res.string.category)}: ${selectedCategory.orEmpty()}")
+        }
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            categories.forEach { category ->
+                DropdownMenuItem(
+                    text = { Text(category) },
+                    onClick = { onSelect(category); expanded = false }
+                )
             }
         }
     }
@@ -686,15 +778,30 @@ private fun DatePickerField(label: String, selected: LocalDate, onSelect: (Local
     ) { Text("$label: $selected") }
     if (open) {
         val pickerState =
-            rememberDatePickerState(initialSelectedDateMillis = selected.toEpochDays() * 86_400_000L)
+            rememberDatePickerState(
+                initialSelectedDateMillis = selected.toEpochDays() * 86_400_000L,
+                selectableDates = object : SelectableDates {
+                    override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                        val pickerDate = Instant.fromEpochMilliseconds(utcTimeMillis)
+                            .toLocalDateTime(TimeZone.UTC)
+                            .date
+
+                        return pickerDate <= today()
+                    }
+
+                    override fun isSelectableYear(year: Int): Boolean {
+                        return year <= today().year
+                    }
+                },
+            )
         DatePickerDialog(
             onDismissRequest = { open = false },
             confirmButton = {
                 TextButton(onClick = {
                     pickerState.selectedDateMillis?.let { millis ->
-                        onSelect(
-                            Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.UTC).date
-                        )
+                        val toLocalDateTime =
+                            Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.UTC)
+                        onSelect(toLocalDateTime.date)
                     }
                     open = false
                 }) { Text(stringResource(Res.string.select_date)) }
@@ -731,5 +838,4 @@ internal fun statusLabel(status: ComplianceStatus): String = stringResource(
     }
 )
 
-private fun today(): LocalDate =
-    Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date
+private fun today(): LocalDate = Clock.System.todayIn(TimeZone.currentSystemDefault())

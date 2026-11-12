@@ -40,7 +40,8 @@ data class CreateExpenseRequest(
     val currency: String = "KES",
     val transactionDate: String, // ISO date string e.g. "2026-05-15"
     val payingPartnerId: String,
-    val notes: String = ""
+    val notes: String = "",
+    val categoryName: String? = null
 )
 
 @Serializable

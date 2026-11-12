@@ -17,7 +17,8 @@ data class Project(
     val name: String,
     val description: String,
     val ownerUserId: String,
-    val createdAtEpochMs: Long
+    val createdAtEpochMs: Long,
+    val expenseCategories: List<String> = emptyList()
 )
 
 @Serializable
@@ -69,7 +70,8 @@ data class RegistrationRequest(
 @Serializable
 data class CreateProjectRequest(
     val name: String,
-    val description: String = ""
+    val description: String = "",
+    val expenseCategories: List<String> = emptyList()
 )
 
 @Serializable
@@ -146,7 +148,8 @@ data class Expense(
     val payingPartnerId: String,
     val notes: String = "",
     val splits: List<ExpenseSplit> = emptyList(),
-    val createdAtEpochMs: Long = 0L
+    val createdAtEpochMs: Long = 0L,
+    val categoryName: String? = null
 )
 
 @Serializable
@@ -228,7 +231,8 @@ data class DashboardSummary(
     val categoryBreakdowns: Map<ExpenseCategory, Double>,
     val recentExpenses: List<Expense>,
     val recentTranches: List<TranchePayment>,
-    val notifications: List<AppNotification>
+    val notifications: List<AppNotification>,
+    val categoryBreakdownsByName: Map<String, Double> = emptyMap()
 )
 
 @Serializable

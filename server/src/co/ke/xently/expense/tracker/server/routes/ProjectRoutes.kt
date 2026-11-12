@@ -19,6 +19,7 @@ import co.ke.xently.expense.tracker.server.repository.InvitationResponseStatus
 import co.ke.xently.expense.tracker.server.repository.InviteStatus
 import co.ke.xently.expense.tracker.server.repository.ProjectRepository
 import co.ke.xently.expense.tracker.server.repository.RegistrationStatus
+import co.ke.xently.expense.tracker.server.repository.normalizeExpenseCategories
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
@@ -143,12 +144,20 @@ fun Route.projectRoutes(
                     mapOf("error" to "Project name is required")
                 )
             }
-            val project =
-                projectRepository.createProject(user.id, request.name, request.description)
-                    ?: return@post call.respond(
-                        HttpStatusCode.Conflict,
-                        mapOf("error" to "Project owner profile not found")
-                    )
+            val expenseCategories = normalizeExpenseCategories(request.expenseCategories)
+                ?: return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "Expense categories must be non-blank and unique")
+                )
+            val project = projectRepository.createProject(
+                ownerUserId = user.id,
+                name = request.name,
+                description = request.description,
+                expenseCategories = expenseCategories
+            ) ?: return@post call.respond(
+                HttpStatusCode.Conflict,
+                mapOf("error" to "Project owner profile not found")
+            )
             call.respond(HttpStatusCode.Created, project)
         }
 
@@ -333,16 +342,45 @@ fun Route.projectRoutes(
                     HttpStatusCode.NotFound,
                     mapOf("error" to "Project not found")
                 )
+            val project = projectRepository.getProjectForMember(
+                projectId = projectId,
+                userId = user.id
+            ) ?: return@post call.respond(
+                HttpStatusCode.NotFound,
+                mapOf("error" to "Project not found")
+            )
             if (request.payingPartnerId !in projectMembers.map { it.second.id }) {
                 return@post call.respond(
                     HttpStatusCode.BadRequest,
                     mapOf("error" to "Paying partner must be a project member")
                 )
             }
+            val categoryName = if (project.expenseCategories.isEmpty()) {
+                if (request.categoryName != null) {
+                    return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "Custom categories are not configured for this project")
+                    )
+                }
+                null
+            } else {
+                val requestedCategory = request.categoryName?.trim()
+                    ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "A project expense category is required")
+                    )
+                project.expenseCategories.firstOrNull {
+                    it.equals(requestedCategory, ignoreCase = true)
+                } ?: return@post call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf("error" to "Expense category is not configured for this project")
+                )
+            }
             val expense = Expense(
                 id = "exp-${UUID.randomUUID()}",
                 title = request.title.trim(),
-                category = ExpenseCategory.fromString(request.category),
+                category = ExpenseCategory.fromString(categoryName ?: request.category),
+                categoryName = categoryName,
                 totalAmount = request.totalAmount,
                 currency = request.currency,
                 transactionDate = transactionDate,

@@ -9,12 +9,12 @@ import com.google.auth.oauth2.GoogleCredentials
 import com.google.cloud.firestore.FirestoreOptions
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import java.util.Date
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
-import org.junit.jupiter.api.Assumptions.assumeTrue
 
 class FirestoreProjectRepositoryTest {
     @Test
@@ -45,7 +45,25 @@ class FirestoreProjectRepositoryTest {
                 repository.registerUser(user("duplicate-owner", owner.username.uppercase())).status
             )
 
-            val project = assertNotNull(repository.createProject(owner.id, "Test project", "emulator"))
+            val project = assertNotNull(
+                repository.createProject(
+                    owner.id,
+                    "Test project",
+                    "emulator",
+                    listOf("Soil testing", "Transport")
+                )
+            )
+            assertNull(
+                repository.createProject(
+                    owner.id,
+                    "Invalid project",
+                    "duplicate",
+                    listOf("Tools", " tools ")
+                )
+            )
+            val otherProject = assertNotNull(
+                repository.createProject(owner.id, "Other project", "isolated", listOf("Seedlings"))
+            )
             val invitation = assertNotNull(
                 repository.invitePartner(project.id, owner.id, invitee.username).invitation
             )
@@ -68,14 +86,23 @@ class FirestoreProjectRepositoryTest {
                         id = "expense-${owner.id}",
                         title = "Seedlings",
                         category = ExpenseCategory.SEEDLINGS,
+                        categoryName = "soil testing",
                         totalAmount = 90_000.0,
                         transactionDate = LocalDate(2026, 1, 15),
                         payingPartnerId = owner.id
                     )
                 )
             )
+            assertEquals("Soil testing", expense.categoryName)
             assertEquals(2, expense.splits.size)
             assertEquals(90_000.0, expense.splits.sumOf { it.shareAmount })
+            assertNull(
+                repository.createExpense(
+                    otherProject.id,
+                    owner.id,
+                    expense.copy(id = "other-${owner.id}")
+                )
+            )
             assertNotNull(
                 repository.createTranche(
                     project.id,
@@ -90,7 +117,19 @@ class FirestoreProjectRepositoryTest {
             )
 
             val freshRepository = FirestoreProjectRepository { firestore }
+            assertEquals(
+                listOf("Soil testing", "Transport"),
+                freshRepository.getProjectForMember(project.id, owner.id)?.expenseCategories
+            )
+            assertEquals(
+                listOf("Seedlings"),
+                freshRepository.getProjectForMember(otherProject.id, owner.id)?.expenseCategories
+            )
             assertEquals(listOf(expense.id), freshRepository.getExpenses(project.id, invitee.id)?.map { it.id })
+            assertEquals(
+                "Soil testing",
+                freshRepository.getExpenses(project.id, invitee.id)?.single()?.categoryName
+            )
             assertEquals(1, freshRepository.getTranches(project.id, invitee.id)?.size)
             assertNull(freshRepository.getExpenses(project.id, stranger.id))
         } finally {

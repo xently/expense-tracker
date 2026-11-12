@@ -47,6 +47,7 @@ data class ProjectMemberResponse(
 data class CreateExpensePayload(
     val title: String,
     val category: String,
+    val categoryName: String? = null,
     val totalAmount: Double,
     val currency: String = "KES",
     val transactionDate: String,
@@ -84,7 +85,8 @@ interface ProjectApi {
         baseUrl: String,
         token: String,
         name: String,
-        description: String
+        description: String,
+        expenseCategories: List<String> = emptyList()
     ): Project
 
     suspend fun invite(
@@ -175,10 +177,11 @@ class KtorProjectApi(
         baseUrl: String,
         token: String,
         name: String,
-        description: String
+        description: String,
+        expenseCategories: List<String>
     ): Project = client.post(url(baseUrl, "/projects")) {
         authorize(token)
-        jsonBody(CreateProjectRequest(name, description))
+        jsonBody(CreateProjectRequest(name, description, expenseCategories))
     }.decode()
 
     override suspend fun invite(

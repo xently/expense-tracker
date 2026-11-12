@@ -45,7 +45,6 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.compose.ui.unit.dp
 import co.ke.xently.expense.tracker.categoryLabel
 import co.ke.xently.expense.tracker.model.Expense
-import co.ke.xently.expense.tracker.model.ExpenseCategory
 import co.ke.xently.expense.tracker.resources.Res
 import co.ke.xently.expense.tracker.resources.cancel
 import co.ke.xently.expense.tracker.resources.currency_amount
@@ -74,11 +73,11 @@ internal fun ExpensesScreen(
     onEvent: (ProjectWorkspaceEvent) -> Unit
 ) {
     var selectedCategory by remember(state.selectedProjectId) {
-        mutableStateOf<ExpenseCategory?>(
-            null
-        )
+        mutableStateOf<DisplayCategory?>(null)
     }
-    val visibleExpenses = filterExpensesByCategory(state.expenses, selectedCategory)
+    val visibleExpenses = filterExpensesByCategoryKey(state.expenses, selectedCategory)
+    val categories =
+        expenseCategoryOptions(state.selectedProject?.expenseCategories.orEmpty(), state.expenses)
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier
@@ -106,7 +105,11 @@ internal fun ExpensesScreen(
                             )
                         }
                     )
-                    ExpenseCategory.entries.forEach { category ->
+                    categories.forEach { category ->
+                        val categoryTitle = when (category) {
+                            is DisplayCategory.Project -> category.name
+                            is DisplayCategory.Legacy -> categoryLabel(category.category)
+                        }
                         FilterChip(
                             selected = selectedCategory == category,
                             onClick = { selectedCategory = category },
@@ -114,8 +117,8 @@ internal fun ExpensesScreen(
                                 Text(
                                     stringResource(
                                         Res.string.expense_filter_category_count,
-                                        categoryLabel(category),
-                                        state.expenses.count { it.category == category }
+                                        categoryTitle,
+                                        state.expenses.count { expenseCategoryKey(it) == category }
                                     )
                                 )
                             }
@@ -188,7 +191,7 @@ private fun ExpenseDetailCard(
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
                         Text(
-                            categoryLabel(expense.category),
+                            expense.categoryName ?: categoryLabel(expense.category),
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,

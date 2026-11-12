@@ -43,6 +43,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -57,6 +58,7 @@ import co.ke.xently.expense.tracker.WorkspaceDestination
 import co.ke.xently.expense.tracker.resources.Res
 import co.ke.xently.expense.tracker.resources.app_name
 import co.ke.xently.expense.tracker.resources.app_tagline
+import co.ke.xently.expense.tracker.resources.back_to_project
 import co.ke.xently.expense.tracker.resources.change_project
 import co.ke.xently.expense.tracker.resources.credentials_required
 import co.ke.xently.expense.tracker.resources.dashboard
@@ -353,7 +355,15 @@ private fun WorkspaceTopBar(
             }
         },
         navigationIcon = {
-            if (showNavigationButton) {
+            if (state.phase == WorkspacePhase.PROJECTS && state.selectedProjectId != null) {
+                IconButton(onClick = { onEvent(ProjectWorkspaceEvent.ReturnToProject) }) {
+                    Icon(
+                        imageVector = Icons.arrow_forward,
+                        contentDescription = stringResource(Res.string.back_to_project),
+                        modifier = Modifier.graphicsLayer(scaleX = -1f)
+                    )
+                }
+            } else if (showNavigationButton) {
                 IconButton(onClick = onOpenNavigation) {
                     Icon(imageVector = Icons.menu, contentDescription = navigationMenuLabel)
                 }

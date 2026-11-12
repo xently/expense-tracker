@@ -14,7 +14,6 @@ import com.google.cloud.firestore.Firestore
 import com.google.firebase.cloud.FirestoreClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.security.MessageDigest
 import java.util.UUID
@@ -56,15 +55,23 @@ class FirestoreProjectRepository(
         usernameDoc.getString("userId")?.let { db.collection(USERS).document(it).get().get().decode() }
     }
 
-    override suspend fun createProject(ownerUserId: String, name: String, description: String): Project? =
+    override suspend fun createProject(
+        ownerUserId: String,
+        name: String,
+        description: String,
+        expenseCategories: List<String>
+    ): Project? =
         withContext(Dispatchers.IO) {
             val db = firestoreProvider()
+            val normalizedCategories = normalizeExpenseCategories(expenseCategories)
+                ?: return@withContext null
             val project = Project(
                 id = UUID.randomUUID().toString(),
                 name = name.trim(),
                 description = description.trim(),
                 ownerUserId = ownerUserId,
-                createdAtEpochMs = System.currentTimeMillis()
+                createdAtEpochMs = System.currentTimeMillis(),
+                expenseCategories = normalizedCategories
             )
             val userRef = db.collection(USERS).document(ownerUserId)
             val projectRef = db.collection(PROJECTS).document(project.id)
@@ -244,9 +251,21 @@ class FirestoreProjectRepository(
             val payerRef = projectRef.collection(MEMBERSHIPS).document(expense.payingPartnerId)
             val expenseRef = projectRef.collection(EXPENSES).document(expense.id)
             db.runTransaction { transaction ->
+                val projectDoc = transaction.get(projectRef).get()
+                val project = projectDoc.decode<Project>() ?: return@runTransaction null
                 val caller = transaction.get(callerRef).get()
                 val payer = transaction.get(payerRef).get()
                 if (!caller.exists() || !payer.exists()) return@runTransaction null
+                val categoryName = if (project.expenseCategories.isEmpty()) {
+                    if (expense.categoryName != null) return@runTransaction null
+                    null
+                } else {
+                    val requestedCategory =
+                        expense.categoryName?.trim() ?: return@runTransaction null
+                    project.expenseCategories.firstOrNull {
+                        it.equals(requestedCategory, ignoreCase = true)
+                    } ?: return@runTransaction null
+                }
                 val memberDocs = transaction.get(projectRef.collection(MEMBERSHIPS)).get().documents
                 val partners = memberDocs.mapNotNull { it.decodeMembership() }
                     .mapNotNull { membership ->
@@ -257,6 +276,7 @@ class FirestoreProjectRepository(
                         co.ke.xently.expense.tracker.model.Partner(member.id, member.displayName, member.email)
                     }
                 val authorizedExpense = expense.copy(
+                    categoryName = categoryName,
                     splits = ExpenseCalculator.calculateSplits(expense.totalAmount, expense.transactionDate, partners)
                 )
                 transaction.set(expenseRef, payload(authorizedExpense))

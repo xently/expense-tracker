@@ -127,9 +127,15 @@ data class ProjectWorkspaceState(
 sealed interface ProjectWorkspaceEvent {
     data class Connect(val apiBaseUrl: String, val accessToken: String) : ProjectWorkspaceEvent
     data class Register(val username: String, val displayName: String) : ProjectWorkspaceEvent
-    data class CreateProject(val name: String, val description: String) : ProjectWorkspaceEvent
+    data class CreateProject(
+        val name: String,
+        val description: String,
+        val expenseCategories: List<String> = emptyList()
+    ) : ProjectWorkspaceEvent
+
     data class SelectProject(val projectId: String) : ProjectWorkspaceEvent
     data object BackToProjects : ProjectWorkspaceEvent
+    data object ReturnToProject : ProjectWorkspaceEvent
     data class InvitePartner(val username: String) : ProjectWorkspaceEvent
     data class RespondToInvitation(val invitationId: String, val accept: Boolean) :
         ProjectWorkspaceEvent
@@ -140,7 +146,8 @@ sealed interface ProjectWorkspaceEvent {
         val amount: Double,
         val date: LocalDate,
         val payingPartnerId: String,
-        val notes: String
+        val notes: String,
+        val categoryName: String? = null
     ) : ProjectWorkspaceEvent
 
     data class DeleteExpense(val expenseId: String) : ProjectWorkspaceEvent
@@ -187,10 +194,21 @@ class ProjectWorkspaceViewModel(
         when (event) {
             is ProjectWorkspaceEvent.Connect -> connect(event.apiBaseUrl, event.accessToken)
             is ProjectWorkspaceEvent.Register -> register(event.username, event.displayName)
-            is ProjectWorkspaceEvent.CreateProject -> createProject(event.name, event.description)
+            is ProjectWorkspaceEvent.CreateProject -> createProject(
+                name = event.name,
+                description = event.description,
+                expenseCategories = event.expenseCategories
+            )
+
             is ProjectWorkspaceEvent.SelectProject -> selectProject(event.projectId)
             ProjectWorkspaceEvent.BackToProjects -> _state.update {
                 it.copy(phase = WorkspacePhase.PROJECTS, activeForm = null)
+            }
+
+            ProjectWorkspaceEvent.ReturnToProject -> _state.update {
+                if (it.phase == WorkspacePhase.PROJECTS && it.selectedProjectId != null) {
+                    it.copy(phase = WorkspacePhase.PROJECT, activeForm = null)
+                } else it
             }
 
             is ProjectWorkspaceEvent.InvitePartner -> invitePartner(event.username)
@@ -297,12 +315,19 @@ class ProjectWorkspaceViewModel(
         if (selectedId != null) loadProjectData(selectedId)
     }
 
-    private fun createProject(name: String, description: String) = launchRequest {
-        val current = _state.value
-        api.createProject(current.apiBaseUrl, current.accessToken, name.trim(), description.trim())
-        _state.update { it.copy(message = WorkspaceMessage.PROJECT_CREATED) }
-        loadWorkspace()
-    }
+    private fun createProject(name: String, description: String, expenseCategories: List<String>) =
+        launchRequest {
+            val current = _state.value
+            val project = api.createProject(
+                current.apiBaseUrl,
+                current.accessToken,
+                name.trim(),
+                description.trim(),
+                expenseCategories.map(String::trim)
+            )
+            _state.update { it.copy(message = WorkspaceMessage.PROJECT_CREATED) }
+            loadWorkspace(preferredProjectId = project.id)
+        }
 
     private fun selectProject(projectId: String) {
         if (_state.value.projects.none { it.id == projectId }) return
@@ -386,6 +411,7 @@ class ProjectWorkspaceViewModel(
                 CreateExpensePayload(
                     title = event.title.trim(),
                     category = event.category.name,
+                    categoryName = event.categoryName?.trim()?.takeIf(String::isNotEmpty),
                     totalAmount = event.amount,
                     transactionDate = event.date.toString(),
                     payingPartnerId = event.payingPartnerId,

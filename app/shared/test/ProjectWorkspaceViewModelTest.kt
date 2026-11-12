@@ -230,6 +230,88 @@ class ProjectWorkspaceViewModelTest {
     }
 
     @Test
+    fun returningFromProjectSwitcherRestoresTheSameProjectAndTab() {
+        val api = FakeProjectApi().apply {
+            projects += project("one")
+            projects += project("two")
+        }
+        val viewModel = ProjectWorkspaceViewModel(api)
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+        viewModel.onEvent(ProjectWorkspaceEvent.SelectProject("one"))
+        viewModel.onEvent(ProjectWorkspaceEvent.SelectTab(NavigationTab.PARTNERS))
+        viewModel.onEvent(ProjectWorkspaceEvent.BackToProjects)
+
+        assertEquals(WorkspacePhase.PROJECTS, viewModel.state.value.phase)
+        assertEquals("one", viewModel.state.value.selectedProjectId)
+
+        viewModel.onEvent(ProjectWorkspaceEvent.ReturnToProject)
+
+        assertEquals(WorkspacePhase.PROJECT, viewModel.state.value.phase)
+        assertEquals("one", viewModel.state.value.selectedProjectId)
+        assertEquals(NavigationTab.PARTNERS, viewModel.state.value.selectedTab)
+    }
+
+    @Test
+    fun returningWithoutAnActiveProjectKeepsTheProjectSelectionScreen() {
+        val viewModel = ProjectWorkspaceViewModel(FakeProjectApi())
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+
+        viewModel.onEvent(ProjectWorkspaceEvent.ReturnToProject)
+
+        assertEquals(WorkspacePhase.PROJECTS, viewModel.state.value.phase)
+        assertNull(viewModel.state.value.selectedProjectId)
+    }
+
+    @Test
+    fun creatingProjectFromSwitcherOpensTheNewProject() {
+        val api = FakeProjectApi().apply { projects += project("existing") }
+        val viewModel = ProjectWorkspaceViewModel(api)
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+        viewModel.onEvent(ProjectWorkspaceEvent.BackToProjects)
+
+        viewModel.onEvent(ProjectWorkspaceEvent.CreateProject("New project", "", listOf("Tools")))
+
+        assertEquals(WorkspacePhase.PROJECT, viewModel.state.value.phase)
+        assertEquals("created", viewModel.state.value.selectedProjectId)
+        assertEquals(listOf("Tools"), viewModel.state.value.selectedProject?.expenseCategories)
+    }
+
+    @Test
+    fun projectCategoriesAreSentAndUsedForNewExpenses() {
+        val api = FakeProjectApi()
+        val viewModel = ProjectWorkspaceViewModel(api)
+        viewModel.onEvent(ProjectWorkspaceEvent.Connect(SERVICE_URL, TOKEN))
+        viewModel.onEvent(
+            ProjectWorkspaceEvent.CreateProject(
+                name = "Orchard",
+                description = "",
+                expenseCategories = listOf("Soil testing", "Seedlings")
+            )
+        )
+
+        assertEquals(listOf("Soil testing", "Seedlings"), api.lastProjectCategories)
+        assertEquals(
+            listOf("Soil testing", "Seedlings"),
+            viewModel.state.value.selectedProject?.expenseCategories
+        )
+
+        viewModel.onEvent(
+            ProjectWorkspaceEvent.CreateExpense(
+                title = "Soil sample",
+                category = ExpenseCategory.MISCELLANEOUS,
+                amount = 100.0,
+                date = LocalDate(2026, 5, 1),
+                payingPartnerId = USER.id,
+                notes = "",
+                categoryName = "Soil testing"
+            )
+        )
+
+        assertEquals("Soil testing", api.lastExpensePayload?.categoryName)
+        assertEquals("Soil testing", viewModel.state.value.expenses.single().categoryName)
+    }
+
+    @Test
     fun switchingProjectsNeverShowsPreviousProjectRecordsOnLoadFailure() {
         val api = FakeProjectApi().apply {
             projects += project("one")
@@ -420,6 +502,8 @@ class ProjectWorkspaceViewModelTest {
         var failMemberLoad = false
         var profileNotFound = false
         var lastExpenseProjectId: String? = null
+        var lastExpensePayload: CreateExpensePayload? = null
+        var lastProjectCategories: List<String> = emptyList()
         var lastTrancheProjectId: String? = null
         var lastTranchePayload: CreateTranchePayload? = null
         var lastRevenueProjectId: String? = null
@@ -463,9 +547,13 @@ class ProjectWorkspaceViewModelTest {
             baseUrl: String,
             token: String,
             name: String,
-            description: String
-        ): Project =
-            project("created", name, description).also(projects::add)
+            description: String,
+            expenseCategories: List<String>
+        ): Project {
+            lastProjectCategories = expenseCategories
+            return project("created", name, description).copy(expenseCategories = expenseCategories)
+                .also(projects::add)
+        }
 
         override suspend fun invite(
             baseUrl: String,
@@ -517,6 +605,7 @@ class ProjectWorkspaceViewModelTest {
         ): Expense {
             if (failExpenseCreation) throw ApiException(403, "Forbidden")
             lastExpenseProjectId = projectId
+            lastExpensePayload = payload
             return Expense(
                 id = "expense-1",
                 title = payload.title,
@@ -524,7 +613,8 @@ class ProjectWorkspaceViewModelTest {
                 totalAmount = payload.totalAmount,
                 transactionDate = LocalDate.parse(payload.transactionDate),
                 payingPartnerId = payload.payingPartnerId,
-                notes = payload.notes
+                notes = payload.notes,
+                categoryName = payload.categoryName
             ).also { expensesByProject[projectId] = expensesByProject[projectId].orEmpty() + it }
         }
 

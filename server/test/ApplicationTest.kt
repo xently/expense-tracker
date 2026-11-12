@@ -1,10 +1,12 @@
 package co.ke.xently.expense.tracker.server
 
 import co.ke.xently.expense.tracker.model.DashboardSummary
+import co.ke.xently.expense.tracker.model.Expense
 import co.ke.xently.expense.tracker.model.MyProjectsResponse
 import co.ke.xently.expense.tracker.model.PartnerId
 import co.ke.xently.expense.tracker.model.Project
 import co.ke.xently.expense.tracker.model.ProjectInvitation
+import co.ke.xently.expense.tracker.model.ProjectUser
 import co.ke.xently.expense.tracker.server.auth.AuthTokenVerifier
 import co.ke.xently.expense.tracker.server.auth.AuthenticatedUser
 import co.ke.xently.expense.tracker.server.auth.DevelopmentAuthTokenVerifier
@@ -167,6 +169,95 @@ class ApplicationTest {
         }
         assertEquals(HttpStatusCode.OK, tranches.status)
         assertTrue(tranches.bodyAsText().contains("DEMO-001"))
+    }
+
+    @Test
+    fun projectExpenseCategoriesAreValidatedScopedAndReturned() = testApplication {
+        val projectRepository = InMemoryProjectRepository()
+        projectRepository.registerUser(
+            ProjectUser("uid-owner", "owner", "Owner", "owner@example.test")
+        )
+        application {
+            module(projectRepository = projectRepository, authTokenVerifier = testVerifier)
+        }
+        val authHeader = HttpHeaders.Authorization to "Bearer owner-token"
+
+        val firstProjectResponse = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Orchard","expenseCategories":["Soil testing","Transport"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, firstProjectResponse.status)
+        val firstProject = json.decodeFromString<Project>(firstProjectResponse.bodyAsText())
+        assertEquals(listOf("Soil testing", "Transport"), firstProject.expenseCategories)
+
+        val secondProjectResponse = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Greenhouse","expenseCategories":["Seedlings"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, secondProjectResponse.status)
+        val secondProject = json.decodeFromString<Project>(secondProjectResponse.bodyAsText())
+
+        val createdExpense = client.post("/api/v1/projects/${firstProject.id}/expenses") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(
+                """{"title":"Soil sample","category":"MISCELLANEOUS","categoryName":"soil TESTING","totalAmount":1200.0,"transactionDate":"2026-05-01","payingPartnerId":"uid-owner"}"""
+            )
+        }
+        assertEquals(HttpStatusCode.Created, createdExpense.status)
+        assertEquals(
+            "Soil testing",
+            json.decodeFromString<Expense>(createdExpense.bodyAsText()).categoryName
+        )
+
+        val savedExpenses = client.get("/api/v1/projects/${firstProject.id}/expenses") {
+            header(authHeader.first, authHeader.second)
+        }
+        assertEquals(
+            "Soil testing",
+            json.decodeFromString<List<Expense>>(savedExpenses.bodyAsText()).single().categoryName
+        )
+        val dashboard = client.get("/api/v1/projects/${firstProject.id}/dashboard") {
+            header(authHeader.first, authHeader.second)
+        }
+        assertEquals(
+            1200.0,
+            json.decodeFromString<DashboardSummary>(dashboard.bodyAsText()).categoryBreakdownsByName["Soil testing"]
+        )
+
+        val categoryFromOtherProject =
+            client.post("/api/v1/projects/${secondProject.id}/expenses") {
+                header(authHeader.first, authHeader.second)
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody(
+                    """{"title":"Soil sample","category":"MISCELLANEOUS","categoryName":"Soil testing","totalAmount":1200.0,"transactionDate":"2026-05-01","payingPartnerId":"uid-owner"}"""
+                )
+            }
+        assertEquals(HttpStatusCode.BadRequest, categoryFromOtherProject.status)
+
+        val missingCategoryName = client.post("/api/v1/projects/${firstProject.id}/expenses") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(
+                """{"title":"Soil sample","category":"MISCELLANEOUS","totalAmount":1200.0,"transactionDate":"2026-05-01","payingPartnerId":"uid-owner"}"""
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, missingCategoryName.status)
+
+        val duplicateCategory = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Invalid","expenseCategories":["Tools"," tools "]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, duplicateCategory.status)
+        val blankCategory = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Invalid","expenseCategories":[" "]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, blankCategory.status)
     }
 
     @Test

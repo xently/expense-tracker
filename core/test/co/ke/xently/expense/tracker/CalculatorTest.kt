@@ -8,12 +8,28 @@ import co.ke.xently.expense.tracker.model.Expense
 import co.ke.xently.expense.tracker.model.ExpenseCategory
 import co.ke.xently.expense.tracker.model.PartnerId
 import co.ke.xently.expense.tracker.model.PartnerLedgerSummary
+import co.ke.xently.expense.tracker.model.Project
 import co.ke.xently.expense.tracker.model.TranchePayment
 import kotlinx.datetime.LocalDate
+import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class CalculatorTest {
+
+    @Test
+    fun legacyProjectAndExpenseRecordsDeserializeWithoutCategoryFields() {
+        val project = Json.decodeFromString<Project>(
+            """{"id":"p1","name":"Old","description":"","ownerUserId":"u1","createdAtEpochMs":1}"""
+        )
+        val expense = Json.decodeFromString<Expense>(
+            """{"id":"e1","title":"Seeds","category":"SEEDLINGS","totalAmount":100.0,"transactionDate":"2026-05-01","payingPartnerId":"u1"}"""
+        )
+
+        assertEquals(emptyList(), project.expenseCategories)
+        assertEquals(null, expense.categoryName)
+        assertEquals(ExpenseCategory.SEEDLINGS, expense.category)
+    }
 
     @Test
     fun testDueDateCalculation() {
@@ -92,6 +108,29 @@ class CalculatorTest {
         assertEquals(-30000.0, vin.netBalance)
         assertEquals(30000.0, vin.overdueAmount)
         assertEquals(ComplianceStatus.OVERDUE, vin.complianceStatus)
+    }
+
+    @Test
+    fun dashboardCategoryBreakdownPreservesCustomCategoryNames() {
+        val expense = Expense(
+            id = "custom-expense",
+            title = "Soil sample",
+            category = ExpenseCategory.MISCELLANEOUS,
+            categoryName = "Soil testing",
+            totalAmount = 1250.0,
+            transactionDate = LocalDate(2026, 5, 1),
+            payingPartnerId = PartnerId.HARRISON.name
+        )
+
+        val summary = LedgerCalculator.computeDashboardSummary(
+            expenses = listOf(expense),
+            tranches = emptyList(),
+            notifications = emptyList(),
+            asOfDate = LocalDate(2026, 5, 2)
+        )
+
+        assertEquals(1250.0, summary.categoryBreakdownsByName["Soil testing"])
+        assertEquals(null, summary.categoryBreakdownsByName["Miscellaneous"])
     }
 
     @Test

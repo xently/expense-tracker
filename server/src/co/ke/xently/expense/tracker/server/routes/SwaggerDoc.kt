@@ -78,7 +78,7 @@ val OPENAPI_SPEC_JSON: String = $$"""
         "summary": "Create a project with the caller as owner and first partner",
         "security": [{ "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateProjectRequest" } } } },
-        "responses": { "201": { "description": "Project created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } }, "401": { "description": "Unauthorized" } }
+        "responses": { "201": { "description": "Project created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } } }, "400": { "description": "Invalid project name or expense categories" }, "401": { "description": "Unauthorized" } }
       }
     },
     "/api/v1/projects/{projectId}": {
@@ -134,7 +134,7 @@ val OPENAPI_SPEC_JSON: String = $$"""
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "projectId", "in": "path", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateExpenseRequest" } } } },
-        "responses": { "201": { "description": "Expense created with project-member splits" }, "404": { "description": "Project not found or caller is not a partner" } }
+        "responses": { "201": { "description": "Expense created with project-member splits" }, "400": { "description": "Invalid expense or project category" }, "404": { "description": "Project not found or caller is not a partner" } }
       }
     },
     "/api/v1/projects/{projectId}/expenses/{expenseId}": {
@@ -512,7 +512,8 @@ val OPENAPI_SPEC_JSON: String = $$"""
           "name": { "type": "string" },
           "description": { "type": "string" },
           "ownerUserId": { "type": "string" },
-          "createdAtEpochMs": { "type": "integer", "format": "int64" }
+          "createdAtEpochMs": { "type": "integer", "format": "int64" },
+          "expenseCategories": { "type": "array", "items": { "type": "string" }, "description": "Project-specific expense category names; an empty array preserves legacy enum categories." }
         }
       },
       "MyProjectsResponse": {
@@ -565,7 +566,8 @@ val OPENAPI_SPEC_JSON: String = $$"""
         "required": ["name"],
         "properties": {
           "name": { "type": "string" },
-          "description": { "type": "string" }
+          "description": { "type": "string" },
+          "expenseCategories": { "type": "array", "items": { "type": "string" }, "uniqueItems": true, "description": "Trimmed, case-insensitive unique names used for expenses in this project." }
         }
       },
       "InviteProjectPartnerRequest": {
@@ -584,6 +586,7 @@ val OPENAPI_SPEC_JSON: String = $$"""
         "properties": {
           "title": { "type": "string", "example": "DAP Fertilizer 50kg bags (x10)" },
           "category": { "type": "string", "example": "FERTILIZER", "enum": ["LAND_PREP", "SEEDLINGS", "WEEDING", "FERTILIZER", "CHOPPING", "TRANSPORT", "HARVEST_OPERATIONS", "MISCELLANEOUS"] },
+          "categoryName": { "type": "string", "nullable": true, "example": "Soil testing", "description": "Required for projects with configured expenseCategories; must match a name in that project." },
           "totalAmount": { "type": "number", "format": "double", "example": 60000.0 },
           "currency": { "type": "string", "example": "KES" },
           "transactionDate": { "type": "string", "format": "date", "example": "2026-05-15" },
@@ -605,6 +608,7 @@ val OPENAPI_SPEC_JSON: String = $$"""
           "id": { "type": "string", "example": "exp-101" },
           "title": { "type": "string", "example": "DAP Fertilizer 50kg bags" },
           "category": { "type": "string", "example": "FERTILIZER" },
+          "categoryName": { "type": "string", "nullable": true, "description": "Configured project category name, or null for a legacy expense." },
           "totalAmount": { "type": "number", "format": "double", "example": 60000.0 },
           "currency": { "type": "string", "example": "KES" },
           "transactionDate": { "type": "string", "format": "date", "example": "2026-05-15" },
@@ -679,6 +683,11 @@ val OPENAPI_SPEC_JSON: String = $$"""
           "categoryBreakdowns": {
             "type": "object",
             "additionalProperties": { "type": "number", "format": "double" }
+          },
+          "categoryBreakdownsByName": {
+            "type": "object",
+            "additionalProperties": { "type": "number", "format": "double" },
+            "description": "Expense totals keyed by configured project category name or legacy display name."
           },
           "recentExpenses": {
             "type": "array",
