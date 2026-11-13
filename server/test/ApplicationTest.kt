@@ -1,8 +1,21 @@
 package co.ke.xently.expense.tracker.server
 
 import co.ke.xently.expense.tracker.model.DashboardSummary
+import co.ke.xently.expense.tracker.model.Expense
+import co.ke.xently.expense.tracker.model.MyProjectsResponse
 import co.ke.xently.expense.tracker.model.PartnerId
+import co.ke.xently.expense.tracker.model.Project
+import co.ke.xently.expense.tracker.model.ProjectInvitation
+import co.ke.xently.expense.tracker.model.ProjectUser
+import co.ke.xently.expense.tracker.server.auth.AuthTokenVerifier
+import co.ke.xently.expense.tracker.server.auth.AuthenticatedUser
+import co.ke.xently.expense.tracker.server.auth.DevelopmentAuthTokenVerifier
+import co.ke.xently.expense.tracker.server.auth.FirebaseAuthTokenVerifier
+import co.ke.xently.expense.tracker.server.repository.DEMO_ACCESS_TOKEN
+import co.ke.xently.expense.tracker.server.repository.DEMO_USER
+import co.ke.xently.expense.tracker.server.repository.InMemoryProjectRepository
 import co.ke.xently.expense.tracker.server.repository.InMemoryRepositoryProvider
+import co.ke.xently.expense.tracker.server.repository.seedDemoWorkspace
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -12,6 +25,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -20,6 +34,231 @@ import kotlin.test.assertTrue
 class ApplicationTest {
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    @Test
+    fun missingLegacyDevelopmentConfigUsesAmperClasspathResource() {
+        val args = arrayOf("-config=src/main/resources/application-dev.yaml", "-port=9090")
+
+        val normalized = normalizeEngineArgs(
+            args = args,
+            fileExists = { false },
+            resourceExists = { it == "application-dev.yaml" }
+        )
+
+        assertEquals(listOf("-config=application-dev.yaml", "-port=9090"), normalized.toList())
+    }
+
+    @Test
+    fun existingLegacyDevelopmentConfigTakesPrecedenceOverClasspathFallback() {
+        val args = arrayOf("-config=src/main/resources/application-dev.yaml")
+
+        val normalized = normalizeEngineArgs(
+            args = args,
+            fileExists = { it == "src/main/resources/application-dev.yaml" },
+            resourceExists = { it == "application-dev.yaml" }
+        )
+
+        assertEquals(args.toList(), normalized.toList())
+    }
+
+    @Test
+    fun existingLegacyClasspathResourceTakesPrecedenceOverAmperFallback() {
+        val args = arrayOf("-config=src/main/resources/application-dev.yaml")
+
+        val normalized = normalizeEngineArgs(
+            args = args,
+            fileExists = { false },
+            resourceExists = { it == "src/main/resources/application-dev.yaml" || it == "application-dev.yaml" }
+        )
+
+        assertEquals(args.toList(), normalized.toList())
+    }
+
+    @Test
+    fun otherConfigArgumentsAreNotRewrittenWhenNoMatchingResourceExists() {
+        val args = arrayOf("-config=unavailable.yaml", "-port=9090")
+
+        val normalized = normalizeEngineArgs(
+            args = args,
+            fileExists = { false },
+            resourceExists = { false }
+        )
+
+        assertEquals(args.toList(), normalized.toList())
+    }
+
+    @Test
+    fun serverConfigurationsUseApiPort8081() {
+        listOf("application.yaml", "application-dev.yaml").forEach { configName ->
+            val config = requireNotNull(javaClass.classLoader.getResourceAsStream(configName)) {
+                "Missing server configuration: $configName"
+            }.bufferedReader().use { it.readText() }
+
+            val configuredPort = Regex("(?m)^\\s+port:\\s*(\\d+)\\s*$")
+                .find(config)
+                ?.groupValues
+                ?.get(1)
+            assertEquals("8081", configuredPort, "$configName should use the API port")
+        }
+    }
+
+    private val testVerifier = object : AuthTokenVerifier {
+        private val users = mapOf(
+            "owner-token" to AuthenticatedUser("uid-owner", "owner@example.test", "Owner"),
+            "partner-token" to AuthenticatedUser("uid-partner", "partner@example.test", "Partner"),
+            "outsider-token" to AuthenticatedUser(
+                "uid-outsider",
+                "outsider@example.test",
+                "Outsider"
+            ),
+            "new-user-token" to AuthenticatedUser("uid-new-user", "new@example.test", "New User")
+        )
+
+        override suspend fun verify(token: String): AuthenticatedUser? = users[token]
+    }
+
+    @Test
+    fun firebaseVerifierFailsClosedWhenAdminAuthIsUnavailable() = runBlocking {
+        val verifier = FirebaseAuthTokenVerifier { null }
+        assertEquals(null, verifier.verify("untrusted-token"))
+    }
+
+    @Test
+    fun demoWorkspaceIsSeededAndOnlyTheConfiguredDemoTokenCanAccessIt() = testApplication {
+        val projectRepository = InMemoryProjectRepository()
+        val project = seedDemoWorkspace(projectRepository)
+        application {
+            module(
+                projectRepository = projectRepository,
+                authTokenVerifier = DevelopmentAuthTokenVerifier(mapOf(DEMO_ACCESS_TOKEN to DEMO_USER))
+            )
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/me/projects").status)
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            client.get("/api/v1/me/projects") {
+                header(HttpHeaders.Authorization, "Bearer invalid-demo-token")
+            }.status
+        )
+
+        val headers = HttpHeaders.Authorization to "Bearer $DEMO_ACCESS_TOKEN"
+        val profile = client.get("/api/v1/me/profile") { header(headers.first, headers.second) }
+        assertEquals(HttpStatusCode.OK, profile.status)
+        assertTrue(profile.bodyAsText().contains("vin"))
+
+        val projectsResponse = client.get("/api/v1/me/projects") { header(headers.first, headers.second) }
+        assertEquals(HttpStatusCode.OK, projectsResponse.status)
+        val projects = json.decodeFromString<MyProjectsResponse>(projectsResponse.bodyAsText())
+        assertEquals(listOf(project.id), projects.projects.map { it.id })
+        assertEquals(project.id, projects.defaultProjectId)
+
+        val invitations = client.get("/api/v1/me/invitations") { header(headers.first, headers.second) }
+        assertEquals(HttpStatusCode.OK, invitations.status)
+        assertTrue(invitations.bodyAsText().contains("Community Orchard"))
+
+        val expenses = client.get("/api/v1/projects/${project.id}/expenses") {
+            header(headers.first, headers.second)
+        }
+        assertEquals(HttpStatusCode.OK, expenses.status)
+        assertTrue(expenses.bodyAsText().contains("Land preparation"))
+        assertTrue(expenses.bodyAsText().contains("Seedlings and delivery"))
+
+        val tranches = client.get("/api/v1/projects/${project.id}/tranches") {
+            header(headers.first, headers.second)
+        }
+        assertEquals(HttpStatusCode.OK, tranches.status)
+        assertTrue(tranches.bodyAsText().contains("DEMO-001"))
+    }
+
+    @Test
+    fun projectExpenseCategoriesAreValidatedScopedAndReturned() = testApplication {
+        val projectRepository = InMemoryProjectRepository()
+        projectRepository.registerUser(
+            ProjectUser("uid-owner", "owner", "Owner", "owner@example.test")
+        )
+        application {
+            module(projectRepository = projectRepository, authTokenVerifier = testVerifier)
+        }
+        val authHeader = HttpHeaders.Authorization to "Bearer owner-token"
+
+        val firstProjectResponse = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Orchard","expenseCategories":["Soil testing","Transport"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, firstProjectResponse.status)
+        val firstProject = json.decodeFromString<Project>(firstProjectResponse.bodyAsText())
+        assertEquals(listOf("Soil testing", "Transport"), firstProject.expenseCategories)
+
+        val secondProjectResponse = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Greenhouse","expenseCategories":["Seedlings"]}""")
+        }
+        assertEquals(HttpStatusCode.Created, secondProjectResponse.status)
+        val secondProject = json.decodeFromString<Project>(secondProjectResponse.bodyAsText())
+
+        val createdExpense = client.post("/api/v1/projects/${firstProject.id}/expenses") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(
+                """{"title":"Soil sample","category":"MISCELLANEOUS","categoryName":"soil TESTING","totalAmount":1200.0,"transactionDate":"2026-05-01","payingPartnerId":"uid-owner"}"""
+            )
+        }
+        assertEquals(HttpStatusCode.Created, createdExpense.status)
+        assertEquals(
+            "Soil testing",
+            json.decodeFromString<Expense>(createdExpense.bodyAsText()).categoryName
+        )
+
+        val savedExpenses = client.get("/api/v1/projects/${firstProject.id}/expenses") {
+            header(authHeader.first, authHeader.second)
+        }
+        assertEquals(
+            "Soil testing",
+            json.decodeFromString<List<Expense>>(savedExpenses.bodyAsText()).single().categoryName
+        )
+        val dashboard = client.get("/api/v1/projects/${firstProject.id}/dashboard") {
+            header(authHeader.first, authHeader.second)
+        }
+        assertEquals(
+            1200.0,
+            json.decodeFromString<DashboardSummary>(dashboard.bodyAsText()).categoryBreakdownsByName["Soil testing"]
+        )
+
+        val categoryFromOtherProject =
+            client.post("/api/v1/projects/${secondProject.id}/expenses") {
+                header(authHeader.first, authHeader.second)
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody(
+                    """{"title":"Soil sample","category":"MISCELLANEOUS","categoryName":"Soil testing","totalAmount":1200.0,"transactionDate":"2026-05-01","payingPartnerId":"uid-owner"}"""
+                )
+            }
+        assertEquals(HttpStatusCode.BadRequest, categoryFromOtherProject.status)
+
+        val missingCategoryName = client.post("/api/v1/projects/${firstProject.id}/expenses") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(
+                """{"title":"Soil sample","category":"MISCELLANEOUS","totalAmount":1200.0,"transactionDate":"2026-05-01","payingPartnerId":"uid-owner"}"""
+            )
+        }
+        assertEquals(HttpStatusCode.BadRequest, missingCategoryName.status)
+
+        val duplicateCategory = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Invalid","expenseCategories":["Tools"," tools "]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, duplicateCategory.status)
+        val blankCategory = client.post("/api/v1/projects") {
+            header(authHeader.first, authHeader.second)
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Invalid","expenseCategories":[" "]}""")
+        }
+        assertEquals(HttpStatusCode.BadRequest, blankCategory.status)
+    }
 
     @Test
     fun testRootAndHealth() = testApplication {
@@ -38,8 +277,13 @@ class ApplicationTest {
 
         val openApiResponse = client.get("/api/v1/openapi.json")
         assertEquals(HttpStatusCode.OK, openApiResponse.status)
-        assertTrue(openApiResponse.bodyAsText().contains("openapi"))
-        assertTrue(openApiResponse.bodyAsText().contains("Sugarcane Season Expense Tracker API"))
+        val openApiBody = openApiResponse.bodyAsText()
+        json.parseToJsonElement(openApiBody)
+        assertTrue(openApiBody.contains("openapi"))
+        assertTrue(openApiBody.contains("Project Expense Tracker API"))
+        assertTrue(openApiBody.contains("/api/v1/projects/{projectId}/expenses"))
+        assertTrue(openApiBody.contains("BearerAuth"))
+        assertTrue(openApiBody.contains("\"url\": \"http://localhost:8081\""))
 
         val swaggerUiResponse = client.get("/api/v1/swagger")
         assertEquals(HttpStatusCode.OK, swaggerUiResponse.status)
@@ -50,7 +294,7 @@ class ApplicationTest {
     fun testDashboardAndLedgers() = testApplication {
         val repo = InMemoryRepositoryProvider()
         application {
-            module(repo)
+            module(repo, enableLegacyFinanceRoutes = true)
         }
 
         val response = client.get("/api/v1/dashboard?asOfDate=2026-11-02")
@@ -67,7 +311,7 @@ class ApplicationTest {
     fun testCreateExpenseAndTranche() = testApplication {
         val repo = InMemoryRepositoryProvider()
         application {
-            module(repo)
+            module(repo, enableLegacyFinanceRoutes = true)
         }
 
         // Post expense
@@ -113,7 +357,7 @@ class ApplicationTest {
     fun testRevenueSplitCalculationRoute() = testApplication {
         val repo = InMemoryRepositoryProvider()
         application {
-            module(repo)
+            module(repo, enableLegacyFinanceRoutes = true)
         }
 
         val requestJson = """
@@ -137,12 +381,169 @@ class ApplicationTest {
     fun testTriggerOverdueNotificationCheck() = testApplication {
         val repo = InMemoryRepositoryProvider()
         application {
-            module(repo)
+            module(repo, enableLegacyFinanceRoutes = true)
         }
 
         val response = client.post("/api/v1/notifications/trigger-check?asOfDate=2026-11-02")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = response.bodyAsText()
         assertTrue(body.contains("dispatchedCount"))
+    }
+
+    @Test
+    fun projectMembershipAndFinanceAreScopedToAuthenticatedUsers() = testApplication {
+        val projectRepository = InMemoryProjectRepository()
+        application {
+            module(
+                projectRepository = projectRepository,
+                authTokenVerifier = testVerifier
+            )
+        }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/api/v1/me/projects").status)
+
+        suspend fun register(token: String, username: String) = client.post("/api/v1/me/profile") {
+            header(HttpHeaders.Authorization, "Bearer $token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"username":"$username","displayName":"${username.replaceFirstChar { it.uppercase() }}"}""")
+        }
+
+        assertEquals(HttpStatusCode.Created, register("owner-token", "owner").status)
+        assertEquals(HttpStatusCode.Created, register("partner-token", "partner").status)
+        assertEquals(HttpStatusCode.Created, register("outsider-token", "outsider").status)
+        assertEquals(HttpStatusCode.Conflict, register("new-user-token", "partner").status)
+
+        val projectResponse = client.post("/api/v1/projects") {
+            header(HttpHeaders.Authorization, "Bearer owner-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Community Garden","description":"Shared land"}""")
+        }
+        assertEquals(HttpStatusCode.Created, projectResponse.status)
+        val project = json.decodeFromString<Project>(projectResponse.bodyAsText())
+
+        val ownerProjects = client.get("/api/v1/me/projects") {
+            header(HttpHeaders.Authorization, "Bearer owner-token")
+        }
+        assertEquals(HttpStatusCode.OK, ownerProjects.status)
+        assertTrue(ownerProjects.bodyAsText().contains(project.id))
+
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.get("/api/v1/projects/${project.id}") {
+                header(HttpHeaders.Authorization, "Bearer outsider-token")
+            }.status
+        )
+        assertEquals(
+            HttpStatusCode.Unauthorized,
+            client.get("/api/v1/me/projects") {
+                header(HttpHeaders.Authorization, "Bearer invalid-token")
+            }.status
+        )
+
+        val inviteBody = """{"username":"partner"}"""
+        val nonOwnerInvite = client.post("/api/v1/projects/${project.id}/invitations") {
+            header(HttpHeaders.Authorization, "Bearer partner-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(inviteBody)
+        }
+        assertEquals(HttpStatusCode.Forbidden, nonOwnerInvite.status)
+
+        val invitationResponse = client.post("/api/v1/projects/${project.id}/invitations") {
+            header(HttpHeaders.Authorization, "Bearer owner-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(inviteBody)
+        }
+        assertEquals(HttpStatusCode.Created, invitationResponse.status)
+        val invitation = json.decodeFromString<ProjectInvitation>(invitationResponse.bodyAsText())
+        val duplicateInvite = client.post("/api/v1/projects/${project.id}/invitations") {
+            header(HttpHeaders.Authorization, "Bearer owner-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(inviteBody)
+        }
+        assertEquals(HttpStatusCode.Conflict, duplicateInvite.status)
+
+        val wrongUserResponse = client.post("/api/v1/invitations/${invitation.id}/respond") {
+            header(HttpHeaders.Authorization, "Bearer outsider-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"accept":true}""")
+        }
+        assertEquals(HttpStatusCode.Forbidden, wrongUserResponse.status)
+
+        val acceptResponse = client.post("/api/v1/invitations/${invitation.id}/respond") {
+            header(HttpHeaders.Authorization, "Bearer partner-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"accept":true}""")
+        }
+        assertEquals(HttpStatusCode.OK, acceptResponse.status)
+        val partnerProjects = json.decodeFromString<MyProjectsResponse>(
+            client.get("/api/v1/me/projects") {
+                header(HttpHeaders.Authorization, "Bearer partner-token")
+            }.bodyAsText()
+        )
+        assertEquals(project.id, partnerProjects.defaultProjectId)
+
+        val expenseResponse = client.post("/api/v1/projects/${project.id}/expenses") {
+            header(HttpHeaders.Authorization, "Bearer owner-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(
+                """{"title":"Seeds","category":"SEEDLINGS","totalAmount":100.0,"transactionDate":"2026-04-03","payingPartnerId":"uid-owner"}"""
+            )
+        }
+        assertEquals(HttpStatusCode.Created, expenseResponse.status)
+        assertTrue(expenseResponse.bodyAsText().contains("uid-partner"))
+
+        val secondProjectResponse = client.post("/api/v1/projects") {
+            header(HttpHeaders.Authorization, "Bearer outsider-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody("""{"name":"Art Collective"}""")
+        }
+        assertEquals(HttpStatusCode.Created, secondProjectResponse.status)
+        val secondProject = json.decodeFromString<Project>(secondProjectResponse.bodyAsText())
+        val secondInvitation = client.post("/api/v1/projects/${secondProject.id}/invitations") {
+            header(HttpHeaders.Authorization, "Bearer outsider-token")
+            header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+            setBody(inviteBody)
+        }
+        assertEquals(HttpStatusCode.Created, secondInvitation.status)
+        val secondInvitationId =
+            json.decodeFromString<ProjectInvitation>(secondInvitation.bodyAsText()).id
+        val acceptSecondInvitation =
+            client.post("/api/v1/invitations/$secondInvitationId/respond") {
+                header(HttpHeaders.Authorization, "Bearer partner-token")
+                header(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+                setBody("""{"accept":true}""")
+            }
+        assertEquals(HttpStatusCode.OK, acceptSecondInvitation.status)
+
+        val partnerProjectsWithMultipleMemberships = json.decodeFromString<MyProjectsResponse>(
+            client.get("/api/v1/me/projects") {
+                header(HttpHeaders.Authorization, "Bearer partner-token")
+            }.bodyAsText()
+        )
+        assertEquals(2, partnerProjectsWithMultipleMemberships.projects.size)
+        assertEquals(null, partnerProjectsWithMultipleMemberships.defaultProjectId)
+
+        val secondProjectExpenses = client.get("/api/v1/projects/${secondProject.id}/expenses") {
+            header(HttpHeaders.Authorization, "Bearer partner-token")
+        }
+        assertEquals(HttpStatusCode.OK, secondProjectExpenses.status)
+        assertEquals("[]", secondProjectExpenses.bodyAsText())
+
+        assertEquals(
+            HttpStatusCode.NotFound,
+            client.get("/api/v1/projects/${secondProject.id}") {
+                header(HttpHeaders.Authorization, "Bearer owner-token")
+            }.status
+        )
+
+        val outsiderExpenses = client.get("/api/v1/projects/${project.id}/expenses") {
+            header(HttpHeaders.Authorization, "Bearer outsider-token")
+        }
+        assertEquals(HttpStatusCode.NotFound, outsiderExpenses.status)
+
+        val legacyGlobalDashboard = client.get("/api/v1/dashboard") {
+            header(HttpHeaders.Authorization, "Bearer owner-token")
+        }
+        assertEquals(HttpStatusCode.NotFound, legacyGlobalDashboard.status)
     }
 }

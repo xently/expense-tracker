@@ -41,8 +41,8 @@ environment-specific configurations:
 
 The Ktor backend provides interactive Swagger documentation and standard OpenAPI 3.0 specifications:
 
-- **Interactive Swagger UI:** `http://localhost:8080/api/v1/swagger`
-- **OpenAPI 3.0 Specification:** `http://localhost:8080/api/v1/openapi.json`
+- **Interactive Swagger UI:** `http://localhost:8081/api/v1/swagger`
+- **OpenAPI 3.0 Specification:** `http://localhost:8081/api/v1/openapi.json`
 - **Detailed API Documentation:** Available in [
   `server/README.md`](./server/README.md#swagger--openapi-api-documentation).
 
@@ -68,8 +68,8 @@ The `kotlin` (macOS/Linux) and `kotlin.bat` (Windows) scripts in the project roo
 self-bootstrapping wrappers for the Kotlin Toolchain:
 
 ```bash
-# Run the Ktor Backend Server (Port 8080)
-./kotlin run -m server
+# Run the Ktor Backend Server (Port 8081; Web App uses 8080)
+./kotlin run -m server -- -config=application-dev.yaml
 
 # Run the Web App (Kotlin/Wasm)
 ./kotlin run -m webApp
@@ -80,6 +80,13 @@ self-bootstrapping wrappers for the Kotlin Toolchain:
 # Run the iOS App (macOS & Xcode required)
 ./kotlin run -m iosApp
 ```
+
+The web development server uses port `8080`; the API server uses port `8081`. The Android, iOS
+Simulator, and Web clients use their platform's local development address and open the same seeded
+demo workspace; users do not enter a service URL or bearer token. Android defaults to the standard
+emulator host; contributors using a physical device can configure their local backend URL in the
+Git-ignored Android resource described in [`app/androidApp/README.md`](./app/androidApp/README.md).
+The public demo token is development-only and must never be enabled in a production deployment.
 
 ---
 
@@ -94,3 +101,9 @@ self-bootstrapping wrappers for the Kotlin Toolchain:
 ./kotlin test -m server
 ./kotlin test -m app/shared
 ```
+
+The project is built with Kotlin Amper (`project.yaml` and module `module.yaml` files), while Kover
+is currently distributed as a Gradle plugin. There is no Kover-compatible Amper integration, so a
+coverage report cannot be configured without migrating or adding a separate Gradle build. Also,
+Kover currently measures JVM/Android host tests only; it does not collect coverage from iOS or
+Wasm tests.

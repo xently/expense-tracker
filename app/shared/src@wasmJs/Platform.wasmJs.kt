@@ -1,7 +1,8 @@
 package co.ke.xently.expense.tracker
 
-class WasmPlatform : Platform {
-    override val name: String = "Web with Kotlin/Wasm"
-}
+import androidx.compose.runtime.Composable
 
-actual fun getPlatform(): Platform = WasmPlatform()
+actual fun getPlatform(): Platform = Platform("Web")
+
+@Composable
+actual fun PlatformBackHandler(enabled: Boolean, onBack: () -> Unit) = Unit

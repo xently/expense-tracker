@@ -39,3 +39,6 @@ browsers.
 # Start local development web server with live reloading
 ./kotlin run -m webApp
 ```
+
+The web development server uses port `8080`; its demo API is served separately by the backend on
+port `8081`.

@@ -1,6 +1,17 @@
 package co.ke.xently.expense.tracker.calculator
 
-import co.ke.xently.expense.tracker.model.*
+import co.ke.xently.expense.tracker.model.AppNotification
+import co.ke.xently.expense.tracker.model.ComplianceStatus
+import co.ke.xently.expense.tracker.model.DashboardSummary
+import co.ke.xently.expense.tracker.model.Expense
+import co.ke.xently.expense.tracker.model.ExpenseCategory
+import co.ke.xently.expense.tracker.model.ExpenseSplit
+import co.ke.xently.expense.tracker.model.Partner
+import co.ke.xently.expense.tracker.model.PartnerId
+import co.ke.xently.expense.tracker.model.PartnerLedgerSummary
+import co.ke.xently.expense.tracker.model.PartnerSettlement
+import co.ke.xently.expense.tracker.model.SeasonRevenueCalculation
+import co.ke.xently.expense.tracker.model.TranchePayment
 import kotlinx.datetime.LocalDate
 import kotlin.math.round
 
@@ -178,6 +189,11 @@ object LedgerCalculator {
             ExpenseCalculator.roundDouble(expenses.filter { it.category == cat }
                 .sumOf { it.totalAmount })
         }
+        val categoryBreakdownsByName =
+            expenses.groupBy { it.categoryName ?: it.category.displayName }
+                .mapValues { (_, groupedExpenses) ->
+                    ExpenseCalculator.roundDouble(groupedExpenses.sumOf { it.totalAmount })
+                }
 
         return DashboardSummary(
             totalExpenses = totalExpenses,
@@ -188,7 +204,8 @@ object LedgerCalculator {
             categoryBreakdowns = categoryBreakdowns,
             recentExpenses = expenses.sortedByDescending { it.transactionDate }.take(10),
             recentTranches = tranches.sortedByDescending { it.paymentDate }.take(10),
-            notifications = notifications.sortedByDescending { it.timestampEpochMs }.take(10)
+            notifications = notifications.sortedByDescending { it.timestampEpochMs }.take(10),
+            categoryBreakdownsByName = categoryBreakdownsByName
         )
     }
 }
@@ -221,8 +238,7 @@ object RevenueSplitCalculator {
             val fraction = sharePct / 100.0
             val grossPayoutShare = ExpenseCalculator.roundDouble(grossFactoryPayout * fraction)
             val netPayoutShare = ExpenseCalculator.roundDouble(netFactoryPayout * fraction)
-            val finalTotalPayout = netPayoutShare
-            val netProfit = ExpenseCalculator.roundDouble(finalTotalPayout - actualInvestment)
+            val netProfit = ExpenseCalculator.roundDouble(netPayoutShare - actualInvestment)
             val roi = if (actualInvestment > 0.0) {
                 ExpenseCalculator.roundDouble((netProfit / actualInvestment) * 100.0)
             } else {
@@ -237,7 +253,7 @@ object RevenueSplitCalculator {
                 grossPayoutShare = grossPayoutShare,
                 netPayoutShare = netPayoutShare,
                 directOutOfPocketRecovery = summary.directOutOfPocket,
-                finalTotalPayout = finalTotalPayout,
+                finalTotalPayout = netPayoutShare,
                 netProfit = netProfit,
                 returnOnInvestmentPercentage = roi
             )

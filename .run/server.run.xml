@@ -2,6 +2,7 @@
   <configuration default="false" name="server" type="Amper.Run" nameIsGenerated="true">
     <option name="command" value="run" />
     <EXTENSION ID="amper.run.common">
+      <option name="applicationArguments" value="-config=application-dev.yaml " />
       <option name="module" value="server" />
     </EXTENSION>
     <method v="2" />

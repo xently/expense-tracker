@@ -28,14 +28,23 @@ platform-specific bridges across Android, iOS, and Web (Wasm/JS).
 
 ### 4. Reactive State Management & ViewModels
 
-- **`ExpenseTrackerViewModel`:** Centralized state management using `StateFlow<DashboardUiState>`
-  with live calculation of expense splits, ledger balances, and notifications.
+- **`ProjectWorkspaceViewModel`:** Centralized project-scoped state and event processing using
+  `StateFlow`; requests use the server's shared API and project membership for authorization.
+- **Demo connection:** The UI has no per-user service URL or token fields. Android defaults to
+  `http://10.0.2.2:8081` for the standard emulator; use the ignored local resource described in
+  [`app/androidApp/README.md`](../androidApp/README.md) to configure a physical-device backend.
+  iOS Simulator uses `http://127.0.0.1:8081`, and Web uses `http://localhost:8081`. These
+  development endpoints match the server's local `application-dev.yaml`; the web development
+  server uses port `8080`, and Android permits HTTP only in debug builds.
 - **Screens:**
-    - `DashboardScreen`: Financial KPI cards, category expense progress bars, and recent activity.
-    - `ExpensesScreen`: Expense logging dialog with live 1/3 split preview and category selectors.
-    - `PartnerLedgersScreen`: Partner compliance status badges and cash tranche recording dialog.
-    - `RevenueSplitScreen`: End-of-season factory payout settlement simulator.
-    - `NotificationsScreen`: Push notification logs and overdue alert triggers.
+    - `DashboardScreen`: Project expense totals, category breakdowns and partner balances.
+    - `ExpensesScreen`: Project-scoped expense list and logging dialog.
+    - `PartnerLedgersScreen`: Member balances and tranche recording.
+    - `RevenueSplitScreen`: End-of-season settlement calculator.
+    - `InvitationsScreen` and `ProjectsScreen`: Project creation, selection and invite responses.
+- **Previews:** Shared preview functions are colocated with `ProjectApp` and each screen, with
+  light/dark, font scale, dynamic color and screen-size variants where applicable. Preview-only
+  sample models are in `ui/PreviewFixtures.kt`.
 
 ---
 
@@ -45,3 +54,6 @@ platform-specific bridges across Android, iOS, and Web (Wasm/JS).
 # Run unit tests for shared ViewModels and UI state logic
 ./kotlin test -m app/shared
 ```
+
+Kover is not available in the current Amper build; it is a Gradle plugin, and no coverage task is
+provided until the project adopts a Kover-compatible Gradle build.
